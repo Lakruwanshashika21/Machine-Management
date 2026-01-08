@@ -1,22 +1,23 @@
 import { useState, useEffect } from 'react';
-import { db, auth } from '../../firebase'; //
-import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore'; //
-import { sendPasswordResetEmail } from 'firebase/auth'; //
+import { db, auth } from '../../firebase';
+import { collection, onSnapshot, doc, setDoc, deleteDoc } from 'firebase/firestore';
+import { sendPasswordResetEmail, createUserWithEmailAndPassword } from 'firebase/auth'; // Added createUser
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Trash2, UserPlus, ShieldCheck, Mail } from 'lucide-react';
+import { Trash2, UserPlus, ShieldCheck, Mail, Loader2 } from 'lucide-react';
+import { toast } from 'sonner'; // Recommended for feedback
 
 export function UserManagement() {
   const [staff, setStaff] = useState<any[]>([]);
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
-  const [password, setPassword] = useState(''); // New state for password
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState<'ADMIN' | 'USER'>('USER');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // 1. Fetch all users from Firestore
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "users"), (snapshot) => {
       setStaff(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
@@ -24,49 +25,56 @@ export function UserManagement() {
     return unsub;
   }, []);
 
-  // 2. Add New User Logic
   const handleAddUser = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSubmitting(true);
+
     try {
-      // Logic for document creation in Firestore
-      const newUserRef = doc(collection(db, "users"));
-      await setDoc(newUserRef, {
+      // 1. Create account in Firebase Authentication
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const uid = userCredential.user.uid;
+
+      // 2. Create the user profile in Firestore using the SAME UID
+      await setDoc(doc(db, "users", uid), {
         name,
         email,
         role,
         createdAt: new Date().toISOString()
       });
+
+      alert("User registered successfully in both Auth and Database!");
       
-      alert("User profile created! Note: Password must be managed via Firebase Auth or the Reset Email button.");
-      setEmail(''); 
+      // Reset form
+      setEmail('');
       setName('');
       setPassword('');
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error adding user:", error);
+      alert("Error: " + error.message);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  // 3. Send Password Reset Email Logic
   const handleResetPassword = async (userEmail: string) => {
     try {
-      await sendPasswordResetEmail(auth, userEmail); //
+      await sendPasswordResetEmail(auth, userEmail);
       alert(`Password reset email sent to ${userEmail}`);
-    } catch (error) {
-      console.error("Error sending reset email:", error);
-      alert("Failed to send reset email. Ensure the user exists in Firebase Authentication.");
+    } catch (error: any) {
+      alert("Error: " + error.message);
     }
   };
 
   const deleteUser = async (id: string) => {
-    if (confirm("Delete this user?")) {
-      await deleteDoc(doc(db, "users", id)); //
+    if (confirm("Delete this user? Note: This only deletes from database. Manual deletion in Auth is required for security.")) {
+      await deleteDoc(doc(db, "users", id));
     }
   };
 
   return (
     <div className="p-4 space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-3xl font-bold">Staff Management</h1>
+        <h1 className="text-3xl font-bold text-slate-900">Staff Management</h1>
         <div className="flex items-center gap-2 text-blue-600">
           <ShieldCheck className="w-6 h-6" />
           <span className="font-semibold">Admin Control Panel</span>
@@ -74,8 +82,7 @@ export function UserManagement() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Registration Form */}
-        <Card className="lg:col-span-1">
+        <Card className="lg:col-span-1 shadow-md">
           <CardHeader><CardTitle>Add New Staff</CardTitle></CardHeader>
           <CardContent>
             <form onSubmit={handleAddUser} className="space-y-4">
@@ -87,7 +94,6 @@ export function UserManagement() {
                 <label className="text-sm font-medium">Email (User ID)</label>
                 <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
               </div>
-              {/* New Password Input Field */}
               <div className="space-y-2">
                 <label className="text-sm font-medium">Initial Password</label>
                 <Input 
@@ -108,20 +114,19 @@ export function UserManagement() {
                   </SelectContent>
                 </Select>
               </div>
-              <Button type="submit" className="w-full">
-                <UserPlus className="w-4 h-4 mr-2" /> Register Staff
+              <Button type="submit" className="w-full bg-blue-600 hover:bg-blue-700" disabled={isSubmitting}>
+                {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><UserPlus className="w-4 h-4 mr-2" /> Register Staff</>}
               </Button>
             </form>
           </CardContent>
         </Card>
 
-        {/* User List Table */}
-        <Card className="lg:col-span-2">
+        <Card className="lg:col-span-2 shadow-md">
           <CardHeader><CardTitle>Active Users</CardTitle></CardHeader>
           <CardContent>
             <div className="border rounded-lg overflow-hidden">
               <Table>
-                <TableHeader className="bg-gray-50">
+                <TableHeader className="bg-slate-50">
                   <TableRow>
                     <TableHead>Name</TableHead>
                     <TableHead>Email</TableHead>
@@ -142,7 +147,6 @@ export function UserManagement() {
                         </span>
                       </TableCell>
                       <TableCell className="text-right flex justify-end gap-2">
-                        {/* New Password Reset Button */}
                         <Button 
                           variant="outline" 
                           size="sm" 

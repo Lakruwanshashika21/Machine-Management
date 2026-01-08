@@ -1,0 +1,15 @@
+{
+  "projects": {
+    "default": "pro-scan-factory"
+  },
+  "targets": {
+    "pro-scan-factory": {
+      "hosting": {
+        "emms-site": [
+          "emms"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}
