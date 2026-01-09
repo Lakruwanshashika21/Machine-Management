@@ -28,6 +28,12 @@ interface AppContextType {
   auditLogs: AuditLog[];
   globalStartDay: () => Promise<void>;
   loading: boolean;
+  // New Global Scanner States
+  isAutoRunMode: boolean;
+  setIsAutoRunMode: (val: boolean) => void;
+  globalScanId: string | null;
+  setGlobalScanId: (val: string | null) => void;
+  isProcessing: boolean;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -41,6 +47,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [scanMode, setScanMode] = useState<ScanMode>('BLUETOOTH');
   const [loading, setLoading] = useState(true);
 
+  // New persistent scanner states
+  const [isAutoRunMode, setIsAutoRunMode] = useState(false);
+  const [globalScanId, setGlobalScanId] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+
   useEffect(() => {
     return onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
@@ -53,7 +64,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  // Real-time Database Listeners
   useEffect(() => {
     const unsubMachines = onSnapshot(collection(db, "machines"), (s) => 
       setMachines(s.docs.map(d => ({ id: d.id, ...d.data() } as Machine))));
@@ -71,7 +81,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { unsubMachines(); unsubSections(); unsubTypes(); unsubLogs(); };
   }, []);
 
-  // Handlers for Sections and Types
+  // Global Hardware Scanner Listener
+  useEffect(() => {
+    let buffer = '';
+    
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      // Prevent scanner interference while typing in actual inputs
+      if (isProcessing || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.key === 'Enter') {
+        if (buffer.length > 2) {
+          const cleanId = buffer.trim().toUpperCase();
+          const exists = machines.find(m => m.id === cleanId);
+          
+          if (exists) {
+            setIsProcessing(true); // Lock input to swallow extra 'Enter' signals
+            
+            if (isAutoRunMode) {
+              await updateMachineStatus(cleanId, 'RUNNING');
+              setTimeout(() => setIsProcessing(false), 500); // Quick reset for auto-run
+            } else {
+              setGlobalScanId(cleanId);
+              // Longer cooldown to prevent immediate dialog closing
+              setTimeout(() => setIsProcessing(false), 1000); 
+            }
+          }
+          buffer = ''; 
+        }
+      } else {
+        if (e.key.length === 1) buffer += e.key;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [machines, isAutoRunMode, isProcessing]);
+
+  // Handlers
   const addSection = async (name: string) => {
     const cleanName = name.trim().toUpperCase();
     await setDoc(doc(db, "sections", cleanName), { name: cleanName });
@@ -109,6 +157,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const time = new Date().toISOString();
     const scans = { ...machine.scans };
+    
+    // Determine next scan slot
     const slot = !scans.scan1 ? 'scan1' : !scans.scan2 ? 'scan2' : 'scan3';
 
     const updatedScans = {
@@ -148,7 +198,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       user, logout: () => signOut(auth), machines, sections, machineTypes,
       addMachine, updateMachineStatus, deleteMachine: (id) => deleteDoc(doc(db, "machines", id)),
       addSection, deleteSection, addMachineType, deleteMachineType,
-      scanMode, setScanMode, auditLogs, globalStartDay, loading 
+      scanMode, setScanMode, auditLogs, globalStartDay, loading,
+      // Global Scanner Exports
+      isAutoRunMode, setIsAutoRunMode, globalScanId, setGlobalScanId, isProcessing
     }}>
       {!loading && children}
     </AppContext.Provider>

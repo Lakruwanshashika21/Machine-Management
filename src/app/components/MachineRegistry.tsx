@@ -7,10 +7,12 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import { Plus, Trash2, FileText, Settings2, Printer, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Settings2, Printer, Loader2, FileDown, Layers } from 'lucide-react';
 import Barcode from 'react-barcode';
 import { Machine } from '../types';
 import { jsPDF } from 'jspdf';
+
+const NEEDLE_TYPES = ["DBx1", "DPx5", "DCx27", "TVx7", "UY128GAS", "TQx1"];
 
 export function MachineRegistry() {
   const { 
@@ -23,7 +25,7 @@ export function MachineRegistry() {
     deleteSection, 
     addMachineType, 
     deleteMachineType 
-  } = useApp(); //
+  } = useApp();
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [showManageConfig, setShowManageConfig] = useState(false);
@@ -32,9 +34,15 @@ export function MachineRegistry() {
   // Form states
   const [section, setSection] = useState('');
   const [type, setType] = useState('');
+  const [name, setName] = useState('');
+  const [brand, setBrand] = useState('');
+  const [purchaseDate, setPurchaseDate] = useState('');
+  const [serialNo, setSerialNo] = useState('');
+  const [faNumber, setFaNumber] = useState('');
   const [modelNo, setModelNo] = useState('');
   const [dept, setDept] = useState('');
-  const [name, setName] = useState('');
+  const [needleSize, setNeedleSize] = useState('');
+  const [needleType, setNeedleType] = useState('');
 
   const [newSectionName, setNewSectionName] = useState('');
   const [newTypeName, setNewTypeName] = useState('');
@@ -42,39 +50,11 @@ export function MachineRegistry() {
 
   const availableTypesForSelectedSection = useMemo(() => {
     return machineTypes.filter(t => t.sectionId === section);
-  }, [section, machineTypes]); //
+  }, [section, machineTypes]);
 
-  // --- REFINED PDF GENERATION LOGIC ---
-  const generateSingleBarcodePDF = async (machine: Machine) => {
-    setIsGenerating(true);
-    // Select the specific container
-    const container = document.getElementById(`barcode-render-${machine.id}`);
-    let canvas = container?.querySelector('canvas');
-
-    // Safety Delay: If canvas isn't ready, wait 300ms
-    if (!canvas) {
-      await new Promise(resolve => setTimeout(resolve, 300));
-      canvas = container?.querySelector('canvas');
-    }
-
-    if (canvas) {
-      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [50, 30] }); //
-      const imgData = canvas.toDataURL("image/png");
-      
-      doc.addImage(imgData, 'PNG', 5, 2, 40, 15); //
-      doc.setFontSize(10);
-      doc.text(machine.id, 25, 22, { align: 'center' });
-      
-      doc.setFontSize(7);
-      const sectionName = sections.find(s => s.id === machine.section)?.name || machine.section;
-      doc.text(`${sectionName} | ${machine.type}`, 25, 26, { align: 'center' });
-      
-      doc.save(`Barcode_${machine.id}.pdf`);
-    } else {
-      alert("Error: Barcode canvas not found. Please try again.");
-    }
-    setIsGenerating(false);
-  };
+  const needsNeedleInfo = useMemo(() => {
+    return type.toUpperCase().includes('SEWING') || type.toUpperCase().includes('SNLS');
+  }, [type]);
 
   const downloadSectionBarcodes = async (sectionId: string) => {
     const sectionMachines = machines.filter(m => m.section === sectionId);
@@ -84,107 +64,170 @@ export function MachineRegistry() {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [50, 30] });
     const sectionObj = sections.find(s => s.id === sectionId);
 
-    for (let i = 0; i < sectionMachines.length; i++) {
-      const machine = sectionMachines[i];
+    let pageCount = 0;
+    for (const machine of sectionMachines) {
       const container = document.getElementById(`barcode-render-${machine.id}`);
       const canvas = container?.querySelector('canvas');
 
       if (canvas) {
-        if (i > 0) doc.addPage([50, 30], 'landscape');
+        if (pageCount > 0) doc.addPage([50, 30], 'landscape');
         const imgData = canvas.toDataURL("image/png");
         doc.addImage(imgData, 'PNG', 5, 2, 40, 15);
         doc.setFontSize(10);
         doc.text(machine.id, 25, 22, { align: 'center' });
         doc.setFontSize(7);
         doc.text(`${sectionObj?.name || 'Sec'} | ${machine.type}`, 25, 26, { align: 'center' });
+        pageCount++;
       }
     }
+    if (pageCount > 0) doc.save(`Section_${sectionObj?.name || 'Barcodes'}.pdf`);
+    setIsGenerating(false);
+  };
 
-    doc.save(`Section_${sectionObj?.name || 'Barcodes'}.pdf`);
+  const downloadAllBarcodes = async () => {
+    setIsGenerating(true);
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [50, 30] });
+    let pageCount = 0;
+
+    for (const sec of sections) {
+      const sectionMachines = machines.filter(m => m.section === sec.id);
+      for (const machine of sectionMachines) {
+        const container = document.getElementById(`barcode-render-${machine.id}`);
+        const canvas = container?.querySelector('canvas');
+        if (canvas) {
+          if (pageCount > 0) doc.addPage([50, 30], 'landscape');
+          const imgData = canvas.toDataURL("image/png");
+          doc.addImage(imgData, 'PNG', 5, 2, 40, 15);
+          doc.setFontSize(10);
+          doc.text(machine.id, 25, 22, { align: 'center' });
+          doc.setFontSize(7);
+          doc.text(`${sec.name} | ${machine.type}`, 25, 26, { align: 'center' });
+          pageCount++;
+        }
+      }
+    }
+    doc.save(`All_Factory_Barcodes.pdf`);
+    setIsGenerating(false);
+  };
+
+  const generateSingleBarcodePDF = async (machine: Machine) => {
+    setIsGenerating(true);
+    const container = document.getElementById(`barcode-render-${machine.id}`);
+    let canvas = container?.querySelector('canvas');
+    if (!canvas) {
+      await new Promise(resolve => setTimeout(resolve, 300));
+      canvas = container?.querySelector('canvas');
+    }
+    if (canvas) {
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [50, 30] });
+      const imgData = canvas.toDataURL("image/png");
+      doc.addImage(imgData, 'PNG', 5, 2, 40, 15);
+      doc.setFontSize(10);
+      doc.text(machine.id, 25, 22, { align: 'center' });
+      doc.setFontSize(7);
+      const sectionName = sections.find(s => s.id === machine.section)?.name || machine.section;
+      doc.text(`${sectionName} | ${machine.type}`, 25, 26, { align: 'center' });
+      doc.save(`Barcode_${machine.id}.pdf`);
+    }
     setIsGenerating(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    await addMachine({ section, type, modelNo, dept, name, status: 'IDLE', notes: '' });
-    setSection(''); setType(''); setModelNo(''); setDept(''); setName('');
+    await addMachine({ 
+      section, type, brand, purchaseDate, serialNo, faNumber, modelNo, dept, name, 
+      status: 'IDLE', 
+      needleSize: needsNeedleInfo ? needleSize : 'N/A',
+      needleType: needsNeedleInfo ? needleType : 'N/A'
+    });
+    setSection(''); setType(''); setBrand(''); setPurchaseDate('');
+    setSerialNo(''); setFaNumber(''); setModelNo(''); setDept(''); 
+    setName(''); setNeedleSize(''); setNeedleType('');
     setShowAddForm(false);
   };
 
   return (
     <div className="p-4 space-y-6">
-      {/* HIDDEN RENDER AREA: Always renders barcodes as CANVASES */}
       <div style={{ position: 'absolute', left: '-9999px', top: 0, visibility: 'hidden' }}>
         {machines.map(m => (
           <div key={m.id} id={`barcode-render-${m.id}`}>
-            <Barcode 
-              value={m.id} 
-              renderer="canvas" 
-              width={2} 
-              height={60} 
-              displayValue={false} 
-            />
+            <Barcode value={m.id} renderer="canvas" width={2} height={60} displayValue={false} />
           </div>
         ))}
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-slate-900">Machine Registry</h1>
-          <p className="text-slate-500 font-medium">Database & Label Management</p>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Machine Registry</h1>
+          <p className="text-slate-500 font-medium">Professional Asset Management</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setShowManageConfig(true)}>
-            <Settings2 className="w-4 h-4 mr-2" /> Configure
+        
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border">
+            <Layers className="w-4 h-4 ml-2 text-slate-400" />
+            <Select onValueChange={(val) => downloadSectionBarcodes(val)}>
+              <SelectTrigger className="w-40 border-none bg-transparent shadow-none font-bold text-xs uppercase">
+                <SelectValue placeholder="Print Section" />
+              </SelectTrigger>
+              <SelectContent>
+                {sections.map(s => <SelectItem key={s.id} value={s.id}>Section {s.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+          <Button variant="outline" onClick={downloadAllBarcodes} disabled={isGenerating}>
+             <FileDown className="w-4 h-4 mr-2" /> All Barcodes
           </Button>
-          <Button onClick={() => setShowAddForm(true)} className="bg-blue-600 hover:bg-blue-700">
+          <Button variant="outline" onClick={() => setShowManageConfig(true)}>
+            <Settings2 className="w-4 h-4 mr-2" /> Config
+          </Button>
+          <Button onClick={() => setShowAddForm(true)} className="bg-blue-600 hover:bg-blue-700 font-bold">
             <Plus className="w-4 h-4 mr-2" /> Add Machine
           </Button>
         </div>
       </div>
 
-      <Card className="shadow-md">
-        <CardHeader className="flex flex-row items-center justify-between bg-slate-50/50">
-          <CardTitle>Asset Inventory</CardTitle>
-          <div className="flex gap-2">
-             <Select onValueChange={(val) => downloadSectionBarcodes(val)}>
-               <SelectTrigger className="w-56 bg-white"><SelectValue placeholder="Bulk Print Section" /></SelectTrigger>
-               <SelectContent>
-                 {sections.map(s => <SelectItem key={s.id} value={s.id}>Section {s.name}</SelectItem>)}
-               </SelectContent>
-             </Select>
-          </div>
-        </CardHeader>
+      <Card className="shadow-md border-slate-200 overflow-hidden">
         <CardContent className="p-0">
           <Table>
-            <TableHeader>
+            <TableHeader className="bg-slate-50">
               <TableRow>
-                <TableHead>Machine ID</TableHead>
-                <TableHead>Name</TableHead>
-                <TableHead>Location</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
+                <TableHead className="font-bold">Asset ID / FA NO</TableHead>
+                <TableHead className="font-bold">Machine Details</TableHead>
+                <TableHead className="font-bold">Technical Specs</TableHead>
+                <TableHead className="font-bold">Registration</TableHead>
+                <TableHead className="text-right font-bold pr-6">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {machines.map((machine) => (
-                <TableRow key={machine.id}>
-                  <TableCell className="font-mono font-bold text-blue-700">{machine.id}</TableCell>
-                  <TableCell className="font-medium">{machine.name}</TableCell>
-                  <TableCell className="text-slate-500">
-                    {(sections.find(s => s.id === machine.section))?.name || machine.section} / {machine.type}
+                <TableRow key={machine.id} className="hover:bg-slate-50/50">
+                  <TableCell>
+                    <div className="font-mono font-bold text-blue-700 uppercase">{machine.id}</div>
+                    <div className="text-[10px] text-slate-400 font-bold">FA: {(machine as any).faNumber}</div>
                   </TableCell>
-                  <TableCell className="text-right flex justify-end gap-2">
-                    <Button 
-                      variant="outline" 
-                      size="sm" 
-                      disabled={isGenerating}
-                      onClick={() => generateSingleBarcodePDF(machine)}
-                    >
-                      {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => deleteMachine(machine.id)}>
-                      <Trash2 className="w-4 h-4 text-red-500" />
-                    </Button>
+                  <TableCell>
+                    <div className="font-bold uppercase text-xs">{machine.name}</div>
+                    <div className="text-[10px] text-slate-500">{(machine as any).brand} | {machine.modelNo}</div>
+                  </TableCell>
+                  <TableCell>
+                    <div className="text-xs font-semibold">{machine.type}</div>
+                    {(machine as any).needleSize !== 'N/A' && (
+                      <div className="text-[10px] text-blue-600 font-bold">Needle: {(machine as any).needleSize} ({(machine as any).needleType})</div>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                     <div className="text-xs font-medium">Purchased: {(machine as any).purchaseDate || 'N/A'}</div>
+                     <div className="text-[10px] text-slate-400 font-mono">SN: {(machine as any).serialNo}</div>
+                  </TableCell>
+                  <TableCell className="text-right pr-6">
+                    <div className="flex justify-end gap-1">
+                        <Button variant="outline" size="sm" onClick={() => generateSingleBarcodePDF(machine)}>
+                          <Printer className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => deleteMachine(machine.id)}>
+                            <Trash2 className="w-4 h-4 text-red-500" />
+                        </Button>
+                    </div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -193,7 +236,82 @@ export function MachineRegistry() {
         </CardContent>
       </Card>
 
-      {/* System Configuration Dialog */}
+      <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader><DialogTitle className="text-xl font-bold uppercase">Register Factory Asset</DialogTitle></DialogHeader>
+          <form onSubmit={handleSubmit} className="space-y-4 pt-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-slate-400">Section</Label>
+                <Select value={section} onValueChange={(val) => { setSection(val); setType(''); }}>
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>{sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-slate-400">Machine Type</Label>
+                <Select value={type} onValueChange={setType} disabled={!section}>
+                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
+                  <SelectContent>{availableTypesForSelectedSection.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-slate-400">Machine Name</Label>
+                <Input placeholder="Asset Name" value={name} onChange={e => setName(e.target.value)} required />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-slate-400">Brand</Label>
+                <Input placeholder="e.g. Juki" value={brand} onChange={e => setBrand(e.target.value)} required />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-slate-400">Serial No</Label>
+                <Input placeholder="S/N" value={serialNo} onChange={e => setSerialNo(e.target.value)} required />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-slate-400">FA Number</Label>
+                <Input placeholder="Fixed Asset No" value={faNumber} onChange={e => setFaNumber(e.target.value)} required />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-slate-400">Purchasing Date</Label>
+                <Input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)} required />
+              </div>
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-slate-400">Model Number</Label>
+                <Input placeholder="Model" value={modelNo} onChange={e => setModelNo(e.target.value)} required />
+              </div>
+            </div>
+            {needsNeedleInfo && (
+              <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black text-blue-600 uppercase">Needle Size</Label>
+                  <Input placeholder="e.g. 14/90" value={needleSize} onChange={e => setNeedleSize(e.target.value)} required />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-[10px] font-black text-blue-600 uppercase">Needle Type</Label>
+                  <Select value={needleType} onValueChange={setNeedleType}>
+                    <SelectTrigger className="bg-white"><SelectValue placeholder="Select" /></SelectTrigger>
+                    <SelectContent>{NEEDLE_TYPES.map(nt => <SelectItem key={nt} value={nt}>{nt}</SelectItem>)}</SelectContent>
+                  </Select>
+                </div>
+              </div>
+            )}
+            <div className="space-y-2 pb-2">
+              <Label className="text-[10px] font-black uppercase text-slate-400">Department</Label>
+              <Input placeholder="Production / Sample" value={dept} onChange={e => setDept(e.target.value)} required />
+            </div>
+            <Button type="submit" className="w-full bg-blue-600 h-14 text-lg font-black uppercase" disabled={!type}>
+              Complete Registration
+            </Button>
+          </form>
+        </DialogContent>
+      </Dialog>
+      {/* Configure Dialog logic remains here */}
       <Dialog open={showManageConfig} onOpenChange={setShowManageConfig}>
         <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Structure Configuration</DialogTitle></DialogHeader>
@@ -233,37 +351,6 @@ export function MachineRegistry() {
               </div>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
-
-      {/* Add Machine Dialog */}
-      <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>Register New Asset</DialogTitle></DialogHeader>
-          <form onSubmit={handleSubmit} className="space-y-4 pt-4">
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label className="text-xs">Section</Label>
-                <Select value={section} onValueChange={(val) => { setSection(val); setType(''); }}>
-                  <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
-                  <SelectContent>{sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label className="text-xs">Type</Label>
-                <Select value={type} onValueChange={setType} disabled={!section}>
-                  <SelectTrigger><SelectValue placeholder="Select Type" /></SelectTrigger>
-                  <SelectContent>{availableTypesForSelectedSection.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}</SelectContent>
-                </Select>
-              </div>
-            </div>
-            <Input placeholder="Machine Name" value={name} onChange={e => setName(e.target.value)} required />
-            <div className="grid grid-cols-2 gap-4">
-              <Input placeholder="Model No" value={modelNo} onChange={e => setModelNo(e.target.value)} required />
-              <Input placeholder="Department" value={dept} onChange={e => setDept(e.target.value)} required />
-            </div>
-            <Button type="submit" className="w-full bg-blue-600" disabled={!type}>Complete Registration</Button>
-          </form>
         </DialogContent>
       </Dialog>
     </div>

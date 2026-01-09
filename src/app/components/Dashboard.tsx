@@ -100,6 +100,14 @@ export function Dashboard() {
     }
   };
 
+  const calculateAge = (dateString: string) => {
+    if (!dateString) return 'N/A';
+    const birth = new Date(dateString);
+    const now = new Date();
+    const age = now.getFullYear() - birth.getFullYear();
+    return age >= 0 ? age : 0;
+  };
+
   // 2. UPDATED: PDF Download to use the filtered data
     const downloadPDF = () => {
       const doc = new jsPDF();
@@ -128,10 +136,63 @@ export function Dashboard() {
       doc.save(`Scan_History_${selectedDate}.pdf`);
     };
   const downloadExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(filteredMachines);
+    // 1. Prepare Sheet 1: Detailed Machine List
+    const detailedData = filteredMachines.map(m => ({
+      'Section': sections.find(s => s.id === m.section)?.name || m.section,
+      'Brand': m.brand || 'N/A',
+      'Model No': m.modelNo || 'N/A',
+      'Serial NO': m.serialNo || 'N/A',
+      'FA Number': m.faNumber || 'N/A',
+      'Machine Type': m.type,
+      'Purchasing Date': m.purchaseDate || 'N/A',
+      'Age (Years)': calculateAge(m.purchaseDate),
+      'Status': m.status,
+      'Last Updated': m.lastUpdated?.split('T')[0] || 'N/A'
+    }));
+
+    // 2. Prepare Sheet 2: Summary by Machine Type
+    const summaryData = sections.flatMap(sec => {
+      const typeList = machineTypes.filter(t => t.sectionId === sec.id);
+      return typeList.map(type => {
+        const typeMachines = filteredMachines.filter(m => m.section === sec.id && m.type === type.name);
+        const stats = calculateGroupStats(typeMachines);
+        return {
+          'Section': sec.name,
+          'Machine Type': type.name,
+          'Inventory (Total)': stats.total,
+          'Running': stats.running,
+          'Idle': stats.idle,
+          'Utilization %': `${stats.utilization}%`
+        };
+      });
+    });
+
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Assets");
-    XLSX.writeFile(wb, "Factory_Data.xlsx");
+
+    // Create Worksheet 1 with Title and Date Headers
+    const ws1 = XLSX.utils.json_to_sheet([]);
+    XLSX.utils.sheet_add_aoa(ws1, [
+      ["Machine Inventory Report"],
+      [`Date: ${selectedDate}`],
+      [] // Empty row
+    ], { origin: "A1" });
+    XLSX.utils.sheet_add_json(ws1, detailedData, { origin: "A4", skipHeader: false });
+
+    // Create Worksheet 2 with Title and Date Headers
+    const ws2 = XLSX.utils.json_to_sheet([]);
+    XLSX.utils.sheet_add_aoa(ws2, [
+      ["Utilization Summary Report"],
+      [`Date: ${selectedDate}`],
+      [] // Empty row
+    ], { origin: "A1" });
+    XLSX.utils.sheet_add_json(ws2, summaryData, { origin: "A4", skipHeader: false });
+
+    // Append sheets
+    XLSX.utils.book_append_sheet(wb, ws1, "Detailed Inventory");
+    XLSX.utils.book_append_sheet(wb, ws2, "Utilization Summary");
+
+    // Generate file
+    XLSX.writeFile(wb, `Machine_Inventory_${selectedDate}.xlsx`);
   };
 
   const containerClass = isDisplayMode 

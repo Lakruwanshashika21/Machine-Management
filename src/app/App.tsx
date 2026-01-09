@@ -11,6 +11,10 @@ import { Toaster } from './components/ui/sonner';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { InstallPrompt } from './components/InstallPrompt';
 
+// Import UI components for the Global Dialog
+import { Dialog, DialogContent } from './components/ui/dialog';
+import { Button } from './components/ui/button';
+
 function AppContent() {
   const { user, loading } = useApp();
   const [currentView, setCurrentView] = useState('dashboard');
@@ -68,11 +72,59 @@ function AccessDenied() {
   );
 }
 
+// Internal component to handle the Global Dialog logic
+function GlobalScanManager() {
+  const { globalScanId, setGlobalScanId, machines, updateMachineStatus, isProcessing } = useApp();
+  
+  const machine = machines.find(m => m.id === globalScanId);
+
+  const handleUpdate = async (status: string) => {
+    if (globalScanId) {
+      await updateMachineStatus(globalScanId, status);
+      setGlobalScanId(null);
+    }
+  };
+
+  return (
+    <Dialog open={!!globalScanId} onOpenChange={() => !isProcessing && setGlobalScanId(null)}>
+      <DialogContent className="w-[95%] sm:max-w-md p-6 md:p-8 rounded-[32px] border-t-8 border-blue-600">
+        {machine && (
+          <div className="space-y-8 text-center">
+            <div className="space-y-1">
+              <p className="text-blue-600 font-black text-[10px] uppercase tracking-widest">Global Scan Detected</p>
+              <h2 className="text-3xl font-black text-slate-900 tracking-tighter uppercase">{machine.name}</h2>
+              <span className="inline-block px-3 py-1 bg-slate-100 rounded-lg font-mono text-xs font-bold text-slate-600 border uppercase">ID: {machine.id}</span>
+            </div>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Button 
+                disabled={isProcessing}
+                onClick={() => handleUpdate('RUNNING')} 
+                className="h-24 text-xl bg-green-600 hover:bg-green-700 font-black shadow-lg rounded-2xl border-b-4 border-green-800"
+              >
+                SET RUNNING
+              </Button>
+              <Button 
+                disabled={isProcessing}
+                onClick={() => handleUpdate('IDLE')} 
+                className="h-24 text-xl bg-red-600 hover:bg-red-700 font-black shadow-lg rounded-2xl border-b-4 border-red-800"
+              >
+                SET IDLE
+              </Button>
+            </div>
+            <Button variant="ghost" disabled={isProcessing} onClick={() => setGlobalScanId(null)} className="text-slate-400 font-bold uppercase text-[10px]">Ignore Scan</Button>
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export default function App() {
   return (
     <AppProvider>
-      {/* Root level placement for immediate trigger */}
       <InstallPrompt /> 
+      <GlobalScanManager /> {/* New: Listens for hardware scans on any page */}
       <AppContent />
       <Toaster position="top-right" expand={false} richColors closeButton />
     </AppProvider>
