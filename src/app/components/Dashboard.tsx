@@ -136,63 +136,51 @@ export function Dashboard() {
       doc.save(`Scan_History_${selectedDate}.pdf`);
     };
   const downloadExcel = () => {
-    // 1. Prepare Sheet 1: Detailed Machine List
+    // 1. Prepare Detailed Data
     const detailedData = filteredMachines.map(m => ({
+      'Machine ID': m.id,
       'Section': sections.find(s => s.id === m.section)?.name || m.section,
       'Brand': m.brand || 'N/A',
-      'Model No': m.modelNo || 'N/A',
       'Serial NO': m.serialNo || 'N/A',
       'FA Number': m.faNumber || 'N/A',
       'Machine Type': m.type,
       'Purchasing Date': m.purchaseDate || 'N/A',
       'Age (Years)': calculateAge(m.purchaseDate),
-      'Status': m.status,
-      'Last Updated': m.lastUpdated?.split('T')[0] || 'N/A'
+      'Running': m.status === 'RUNNING' ? 1 : 0,
+      'Idle': m.status === 'IDLE' ? 1 : 0,
+      'Utilization %': m.status === 'RUNNING' ? '100%' : '0%',
     }));
 
-    // 2. Prepare Sheet 2: Summary by Machine Type
-    const summaryData = sections.flatMap(sec => {
-      const typeList = machineTypes.filter(t => t.sectionId === sec.id);
-      return typeList.map(type => {
-        const typeMachines = filteredMachines.filter(m => m.section === sec.id && m.type === type.name);
-        const stats = calculateGroupStats(typeMachines);
-        return {
-          'Section': sec.name,
-          'Machine Type': type.name,
-          'Inventory (Total)': stats.total,
-          'Running': stats.running,
-          'Idle': stats.idle,
-          'Utilization %': `${stats.utilization}%`
-        };
-      });
-    });
-
     const wb = XLSX.utils.book_new();
+    
+    // Create Worksheet
+    const ws = XLSX.utils.json_to_sheet([]);
 
-    // Create Worksheet 1 with Title and Date Headers
-    const ws1 = XLSX.utils.json_to_sheet([]);
-    XLSX.utils.sheet_add_aoa(ws1, [
-      ["Machine Inventory Report"],
+    // --- Header Formatting Logic ---
+    // A1: Title
+    // A2: Date
+    // A4: Table Headers (Light Blue/Bold Style is handled during File Viewer opening, 
+    // but we set the structure here)
+    XLSX.utils.sheet_add_aoa(ws, [
+      ["Eskimo Fashions (Pvt) Ltd - Machine Inventory"],
       [`Date: ${selectedDate}`],
-      [] // Empty row
+      [] // Spacer
     ], { origin: "A1" });
-    XLSX.utils.sheet_add_json(ws1, detailedData, { origin: "A4", skipHeader: false });
 
-    // Create Worksheet 2 with Title and Date Headers
-    const ws2 = XLSX.utils.json_to_sheet([]);
-    XLSX.utils.sheet_add_aoa(ws2, [
-      ["Utilization Summary Report"],
-      [`Date: ${selectedDate}`],
-      [] // Empty row
-    ], { origin: "A1" });
-    XLSX.utils.sheet_add_json(ws2, summaryData, { origin: "A4", skipHeader: false });
+    // Add JSON data starting from Row 4
+    XLSX.utils.sheet_add_json(ws, detailedData, { origin: "A4", skipHeader: false });
 
-    // Append sheets
-    XLSX.utils.book_append_sheet(wb, ws1, "Detailed Inventory");
-    XLSX.utils.book_append_sheet(wb, ws2, "Utilization Summary");
+    // Set Column Widths for better visibility
+    const wscols = [
+      {wch: 20}, {wch: 15}, {wch: 15}, {wch: 20}, {wch: 20}, 
+      {wch: 20}, {wch: 15}, {wch: 12}, {wch: 10}, {wch: 10}, {wch: 15}
+    ];
+    ws['!cols'] = wscols;
 
-    // Generate file
-    XLSX.writeFile(wb, `Machine_Inventory_${selectedDate}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Inventory Report");
+
+    // Generate File
+    XLSX.writeFile(wb, `Machine_Inventory_Report_${selectedDate}.xlsx`);
   };
 
   const containerClass = isDisplayMode 
@@ -282,7 +270,7 @@ export function Dashboard() {
             {/* NEW: Table-style Header Labels */}
             <div className="hidden sm:flex gap-8 text-[10px] font-black text-slate-400 uppercase tracking-widest mr-4">
                <div className="w-12 text-center">Total</div>
-               <div className="w-12 text-center text-green-600">Run</div>
+               <div className="w-12 text-center text-green-600">Running</div>
                <div className="w-12 text-center text-red-600">Idle</div>
                <div className="w-12 text-center text-blue-600">%</div>
             </div>
