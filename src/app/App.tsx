@@ -9,16 +9,12 @@ import { AuditReports } from './components/AuditReports';
 import { UserManagement } from './components/UserManagement';
 import { Toaster } from './components/ui/sonner';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { InstallPrompt } from './components/InstallPrompt';
 
-/**
- * AppContent handles the conditional rendering of the application
- * based on the authentication state, role, and the selected view.
- */
 function AppContent() {
-  const { user, loading } = useApp(); // Access live auth state and loading status
+  const { user, loading } = useApp();
   const [currentView, setCurrentView] = useState('dashboard');
 
-  // 1. Loading State: High-visibility spinner for factory floor displays
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center bg-slate-50">
@@ -30,14 +26,11 @@ function AppContent() {
     );
   }
 
-  // 2. Auth Guard: Redirects unauthenticated users to the Portal
   if (!user) {
     return <Login />;
   }
 
-  // 3. Role-Based View Router
   const renderView = () => {
-    // Determine if the user has Admin privileges from their profile
     const isAdmin = user?.role === 'ADMIN';
 
     switch (currentView) {
@@ -45,7 +38,6 @@ function AppContent() {
         return <Dashboard />;
       case 'scanning':
         return <Scanning />;
-      // Restricted Admin Views
       case 'registry':
         return isAdmin ? <MachineRegistry /> : <AccessDenied />;
       case 'users':
@@ -66,8 +58,6 @@ function AppContent() {
   );
 }
 
-/** * Simple Access Denied Component for restricted routing
- */
 function AccessDenied() {
   return (
     <div className="flex flex-col items-center justify-center h-64 text-center p-6 bg-red-50 rounded-xl border border-red-100">
@@ -78,15 +68,12 @@ function AccessDenied() {
   );
 }
 
-/**
- * Root App Component
- * Provides the context and feedback toast system for the entire application.
- */
 export default function App() {
   return (
     <AppProvider>
+      {/* Root level placement for immediate trigger */}
+      <InstallPrompt /> 
       <AppContent />
-      {/* Toast notifications positioned for high visibility on dashboards */}
       <Toaster position="top-right" expand={false} richColors closeButton />
     </AppProvider>
   );

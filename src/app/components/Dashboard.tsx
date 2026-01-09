@@ -6,7 +6,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Table, TableBody, TableCell, TableRow } from './ui/table';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
-import { Download, FileSpreadsheet, Calendar, ChevronDown, ChevronRight, LayoutGrid, Cpu, Activity, Monitor, Minimize, Code2 } from 'lucide-react';
+import { Download, FileSpreadsheet, Calendar, ChevronDown, ChevronRight, Monitor, Minimize, Code2 } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -30,9 +30,28 @@ export function Dashboard() {
     return () => clearInterval(timer);
   }, []);
 
-  const filteredMachines = useMemo(() => {
-    return machines.filter((m) => m.status !== 'NOT_WORKING' && (!selectedDate || m.lastUpdated.startsWith(selectedDate)));
-  }, [machines, selectedDate]);
+  
+  // 1. UPDATED: Filtering logic to respect the selectedDate specifically
+    const filteredMachines = useMemo(() => {
+      return machines
+        .filter((m) => m.status !== 'NOT_WORKING')
+        .map((m) => {
+          // Compare the machine's timestamp with the selected dashboard date
+          const isUpdatedOnDate = m.lastUpdated?.startsWith(selectedDate);
+          
+          return {
+            ...m,
+            // Override status to IDLE if no activity was recorded on this specific date
+            status: isUpdatedOnDate ? m.status : 'IDLE',
+            // Filter sub-scan data to only show results from the selected date
+            displayScans: isUpdatedOnDate ? m.scans : {
+              scan1: { status: 'IDLE' },
+              scan2: { status: 'IDLE' },
+              scan3: { status: 'IDLE' }
+            }
+          };
+        });
+    }, [machines, selectedDate]); // Recalculate whenever machines or selectedDate change
 
   const stats = useMemo(() => {
     const running = filteredMachines.filter((m) => m.status === 'RUNNING').length;
@@ -58,8 +77,13 @@ export function Dashboard() {
   const calculateGroupStats = (machineList: any[]) => {
     const running = machineList.filter(m => m.status === 'RUNNING').length;
     const idle = machineList.filter(m => m.status === 'IDLE').length;
-    const total = machineList.length;
-    return { running, idle, utilization: total > 0 ? Math.round((running / total) * 100) : 0 };
+    const total = machineList.length; // Ensure this is captured
+    return { 
+      total, 
+      running, 
+      idle, 
+      utilization: total > 0 ? Math.round((running / total) * 100) : 0 
+    };
   };
 
   const enableTVMode = () => {
@@ -76,16 +100,33 @@ export function Dashboard() {
     }
   };
 
-  const downloadPDF = () => {
-    const doc = new jsPDF();
-    doc.setFontSize(18);
-    doc.text("Daily Machine Scan History", 14, 20);
-    doc.text(`Report Date: ${selectedDate}`, 14, 28);
-    const tableData = filteredMachines.map(m => [m.id, m.name, m.status, m.scans?.scan1?.status || '-', m.scans?.scan2?.status || '-', m.scans?.scan3?.status || '-']);
-    autoTable(doc, { head: [['ID', 'Name', 'Status', 'S1', 'S2', 'S3']], body: tableData, startY: 35 });
-    doc.save(`Scan_History_${selectedDate}.pdf`);
-  };
+  // 2. UPDATED: PDF Download to use the filtered data
+    const downloadPDF = () => {
+      const doc = new jsPDF();
+      doc.setFontSize(18);
+      doc.text("Daily Machine Scan History", 14, 20);
+      doc.text(`Report Date: ${selectedDate}`, 14, 28);
 
+      // Use the filteredMachines list which is already calculated for the selectedDate
+      const tableData = filteredMachines.map(m => [
+        m.id, 
+        m.name, 
+        m.status, 
+        m.displayScans?.scan1?.status || 'IDLE', 
+        m.displayScans?.scan2?.status || 'IDLE', 
+        m.displayScans?.scan3?.status || 'IDLE'
+      ]);
+
+      autoTable(doc, { 
+        head: [['ID', 'Name', 'Status', 'S1', 'S2', 'S3']], 
+        body: tableData, 
+        startY: 35,
+        theme: 'grid',
+        headStyles: { fillColor: [15, 23, 42] } // Professional slate header
+      });
+
+      doc.save(`Scan_History_${selectedDate}.pdf`);
+    };
   const downloadExcel = () => {
     const ws = XLSX.utils.json_to_sheet(filteredMachines);
     const wb = XLSX.utils.book_new();
@@ -99,11 +140,11 @@ export function Dashboard() {
 
   return (
     <div className={containerClass}>
-      {/* NORMAL HEADER: PREVIOUS LAYOUT PRESERVED */}
+      {/* HEADER */}
       <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-xl shadow-sm border ${isDisplayMode ? 'hidden' : ''}`}>
         <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Monitoring Center</h1>
-          <p className="text-slate-500 font-medium tracking-tight">Real-time Production Analytics</p>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Machine Inventory</h1>
+          <p className="text-slate-500 font-medium tracking-tight">Machine Utilizations</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" className="border-blue-600 text-blue-600 font-bold" onClick={enableTVMode}>
@@ -139,7 +180,7 @@ export function Dashboard() {
       {/* KPI TILES */}
       <div className={`grid grid-cols-2 ${isDisplayMode ? 'lg:grid-cols-4 gap-8 mb-10' : 'md:grid-cols-4 gap-4'}`}>
         {[
-          { label: 'Total Assets', val: stats.total, color: isDisplayMode ? 'text-white' : 'text-slate-900' },
+          { label: 'Total', val: stats.total, color: isDisplayMode ? 'text-white' : 'text-slate-900' },
           { label: 'Running', val: stats.running, color: 'text-green-500' },
           { label: 'Idle', val: stats.idle, color: 'text-red-500' },
           { label: 'Utilization', val: `${stats.efficiency}%`, color: 'text-blue-500' }
@@ -156,7 +197,7 @@ export function Dashboard() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* CHART */}
         <Card className={`lg:col-span-4 shadow-xl border-t-4 border-t-blue-500 ${isDisplayMode ? 'bg-slate-900 border-slate-800' : ''}`}>
-          <CardHeader><CardTitle className={isDisplayMode ? 'text-white font-black' : 'font-black'}>Machine Distribution</CardTitle></CardHeader>
+          <CardHeader><CardTitle className={isDisplayMode ? 'text-white font-black' : 'font-black'}>Utilization</CardTitle></CardHeader>
           <CardContent>
             <div className="h-[400px] w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -172,22 +213,20 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* TREE VIEW: WITH SCAN FILTER */}
+        {/* TREE VIEW - UPDATED STRUCTURE */}
         <Card className={`lg:col-span-8 shadow-xl ${isDisplayMode ? 'bg-slate-900 border-slate-800' : ''}`}>
           <CardHeader className={`border-b flex flex-row items-center justify-between ${isDisplayMode ? 'border-slate-800' : 'bg-slate-50/50'}`}>
             <CardTitle className={isDisplayMode ? 'text-white font-black uppercase tracking-widest' : 'font-black'}>Activity Hierarchy</CardTitle>
-            {!isDisplayMode && (
-              <Select value={scanFilter} onValueChange={(val: any) => setScanFilter(val)}>
-                <SelectTrigger className="w-40 bg-white font-bold text-xs"><SelectValue placeholder="All Scans" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="ALL">All Scan Activity</SelectItem>
-                  <SelectItem value="scan1">Scan 1 Status</SelectItem>
-                  <SelectItem value="scan2">Scan 2 Status</SelectItem>
-                  <SelectItem value="scan3">Scan 3 Status</SelectItem>
-                </SelectContent>
-              </Select>
-            )}
+            
+            {/* NEW: Table-style Header Labels */}
+            <div className="hidden sm:flex gap-8 text-[10px] font-black text-slate-400 uppercase tracking-widest mr-4">
+               <div className="w-12 text-center">Total</div>
+               <div className="w-12 text-center text-green-600">Run</div>
+               <div className="w-12 text-center text-red-600">Idle</div>
+               <div className="w-12 text-center text-blue-600">%</div>
+            </div>
           </CardHeader>
+
           <CardContent className="p-0 overflow-y-auto max-h-[650px]">
             {sections.map((sec) => {
               const secMachines = filteredMachines.filter(m => m.section === sec.id);
@@ -196,15 +235,19 @@ export function Dashboard() {
 
               return (
                 <div key={sec.id} className={`border-b ${isDisplayMode ? 'border-slate-800' : ''}`}>
-                  <div className={`p-5 flex items-center justify-between cursor-pointer transition-all ${isDisplayMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`} onClick={() => toggleSection(sec.id)}>
+                  {/* SECTION ROW */}
+                  <div className={`p-4 flex items-center justify-between cursor-pointer transition-all ${isDisplayMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`} onClick={() => toggleSection(sec.id)}>
                     <div className="flex items-center gap-4">
                       {isExpanded ? <ChevronDown className="text-blue-500" /> : <ChevronRight className="text-slate-500" />}
-                      <span className={`font-black uppercase tracking-tight ${isDisplayMode ? 'text-2xl text-white' : 'text-lg'}`}>Section {sec.name}</span>
+                      <span className={`font-black uppercase tracking-tight ${isDisplayMode ? 'text-xl text-white' : 'text-lg text-slate-900'}`}>{sec.name}</span>
                     </div>
-                    <div className="flex gap-8 text-[10px] font-black mr-4">
-                      <span className="text-green-500 uppercase tracking-tighter">RUN: {secStats.running}</span>
-                      <span className="text-red-500 uppercase tracking-tighter">IDLE: {secStats.idle}</span>
-                      <span className="text-blue-500 uppercase tracking-tighter">{secStats.utilization}% UTIL</span>
+                    
+                    {/* Section Values aligned with header */}
+                    <div className="flex gap-8 text-[11px] font-black mr-4 tabular-nums">
+                      <div className="w-12 text-center text-slate-500">{secStats.total}</div>
+                      <div className="w-12 text-center text-green-500">{secStats.running}</div>
+                      <div className="w-12 text-center text-red-500">{secStats.idle}</div>
+                      <div className="w-12 text-center text-blue-500">{secStats.utilization}%</div>
                     </div>
                   </div>
 
@@ -216,16 +259,20 @@ export function Dashboard() {
                         const isTypeExpanded = expandedTypes.includes(type.id);
 
                         return (
-                          <div key={type.id} className={`border-t pl-10 ${isDisplayMode ? 'border-slate-800' : ''}`}>
-                            <div className={`p-4 flex items-center justify-between cursor-pointer ${isDisplayMode ? 'hover:bg-slate-800' : 'hover:bg-blue-50'}`} onClick={() => toggleType(type.id)}>
+                          <div key={type.id} className={`border-t pl-8 ${isDisplayMode ? 'border-slate-800' : ''}`}>
+                            {/* TYPE ROW */}
+                            <div className={`p-3 flex items-center justify-between cursor-pointer ${isDisplayMode ? 'hover:bg-slate-800' : 'hover:bg-blue-50'}`} onClick={() => toggleType(type.id)}>
                               <div className="flex items-center gap-3">
-                                {isTypeExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                                {isTypeExpanded ? <ChevronDown size={14} className="text-blue-400" /> : <ChevronRight size={14} className="text-slate-400" />}
                                 <span className={`text-xs font-black uppercase tracking-widest ${isDisplayMode ? 'text-slate-300' : 'text-slate-500'}`}>{type.name}</span>
                               </div>
-                              <div className="flex gap-4 text-[9px] font-black mr-4 opacity-70">
-                                <span className="text-green-500 uppercase">R: {typeStats.running}</span>
-                                <span className="text-red-500 uppercase">I: {typeStats.idle}</span>
-                                <span className="text-blue-500 uppercase">{typeStats.utilization}%</span>
+                              
+                              {/* Type Values aligned with header */}
+                              <div className="flex gap-8 text-[10px] font-bold mr-4 opacity-80 tabular-nums">
+                                <div className="w-12 text-center text-slate-500">{typeStats.total}</div>
+                                <div className="w-12 text-center text-green-500">{typeStats.running}</div>
+                                <div className="w-12 text-center text-red-500">{typeStats.idle}</div>
+                                <div className="w-12 text-center text-blue-500">{typeStats.utilization}%</div>
                               </div>
                             </div>
 
@@ -239,8 +286,7 @@ export function Dashboard() {
                                         <TableCell className={`text-[10px] uppercase font-black ${m.status === 'RUNNING' ? 'text-green-500' : 'text-red-500'}`}>{m.status}</TableCell>
                                         <TableCell className="flex gap-2 justify-end items-center h-full pt-1">
                                           {[1, 2, 3].map(i => {
-                                            const scan = (m.scans as any)?.[`scan${i}`];
-                                            // Apply Filter Visibility
+                                            const scan = (m as any).displayScans?.[`scan${i}`];
                                             if (scanFilter !== 'ALL' && scanFilter !== `scan${i}`) return null;
                                             return (
                                               <div key={i} className={`w-10 h-6 rounded flex items-center justify-center text-[9px] font-black border ${
@@ -270,10 +316,18 @@ export function Dashboard() {
 
       {/* FOOTER */}
       {!isDisplayMode && (
-        <div className="mt-12 flex items-center justify-center gap-2 border-t pt-8 pb-4">
+        <div className="mt-8 md:mt-12 flex flex-col items-center justify-center gap-2 border-t pt-8 pb-4">
           <div className="p-1.5 bg-blue-100 rounded-lg"><Code2 className="w-4 h-4 text-blue-600" /></div>
-          <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">
-            Developed by <span className="text-blue-600">Lakruwan Shashika</span>
+          <p className="text-[10px] md:text-sm font-bold text-slate-400 uppercase tracking-widest text-center">
+            Developed by{" "}
+            <a 
+              href="https://www.linkedin.com/in/lakruwan-shashika/" 
+              target="_blank" 
+              rel="noopener noreferrer"
+              className="text-blue-600 hover:text-blue-800 hover:underline transition-all decoration-2 underline-offset-4 block sm:inline"
+            >
+              Lakruwan Shashika
+            </a>
           </p>
         </div>
       )}
