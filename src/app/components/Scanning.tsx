@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Card, CardContent } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Switch } from './ui/switch';
 import { Camera, Keyboard, Search, Zap, Loader2, X, FastForward } from 'lucide-react';
 import { Html5Qrcode, Html5QrcodeScannerState } from 'html5-qrcode';
+import { toast } from 'sonner';
 
 export function Scanning() {
   const { 
@@ -14,184 +15,225 @@ export function Scanning() {
     setScanMode, 
     isAutoRunMode, 
     setIsAutoRunMode, 
-    setGlobalScanId 
+    setGlobalScanId,
+    updateMachineStatus 
   } = useApp();
 
   const [manualInput, setManualInput] = useState('');
   const [showCamera, setShowCamera] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
-  
   const scannerRef = useRef<Html5Qrcode | null>(null);
 
-  // 1. Cleanup camera on unmount
+  // Universal cleanup to prevent camera lock and handle component unmounting
   useEffect(() => {
     return () => {
-      const cleanup = async () => {
-        if (scannerRef.current) {
-          const state = scannerRef.current.getState();
-          if (state === Html5QrcodeScannerState.SCANNING || state === Html5QrcodeScannerState.PAUSED) {
-            await scannerRef.current.stop().catch(() => {});
-          }
-          scannerRef.current.clear();
+      if (scannerRef.current) {
+        const state = scannerRef.current.getState();
+        if (state === Html5QrcodeScannerState.SCANNING || state === Html5QrcodeScannerState.PAUSED) {
+          scannerRef.current.stop().catch(() => {});
         }
-      };
-      cleanup();
+      }
     };
   }, []);
 
-  // 2. Handle Camera Scan Success
-  const handleCameraSuccess = (id: string) => {
-    const cleanId = id.trim().toUpperCase();
-    const exists = machines.find((m: any) => m.id === cleanId);
-    
-    if (exists) {
-      // Pass the ID to the global manager in App.tsx
-      setGlobalScanId(cleanId);
-      stopCamera();
-    } else {
-      alert(`Machine ${cleanId} not found.`);
-    }
-  };
+  // UNIVERSAL FUZZY SEARCH: Finds Aurora-001 even if you just type "Aurora 1"
+ const handleIdSubmission = async (input: string) => {
+  const term = input.trim().toUpperCase();
+  if (!term) return;
 
-  const startCamera = async () => {
-    if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
-      alert("Camera requires HTTPS.");
-      return;
+  // 1. TRY EXACT MATCH FIRST (Prevents Aurora matching Glove)
+  let machine = machines.find(m => m.id.toUpperCase() === term);
+
+  // 2. IF NO EXACT MATCH, USE SMART SEARCH
+  if (!machine) {
+    const cleanSearch = term.replace(/[\s-]/g, '');
+    machine = machines.find((m: any) => {
+      const cleanDbId = m.id.toUpperCase().replace(/[\s-]/g, '');
+      const cleanDbName = (m.name || '').toUpperCase().replace(/[\s-]/g, '');
+      return cleanDbId.includes(cleanSearch) || cleanDbName.includes(cleanSearch);
+    });
+  }
+  
+  if (machine) {
+    // CRITICAL: Always use the ID directly from the found machine object
+    const finalId = machine.id; 
+
+    if (isAutoRunMode) {
+      await updateMachineStatus(finalId, 'RUNNING', 'status');
+      toast.success(`${machine.name || finalId} set to RUNNING`);
+      setManualInput('');
+      if (showCamera) stopCamera();
+    } else {
+      setGlobalScanId(finalId); // This ensures the Dialog opens with the CORRECT ID
+      if (showCamera) stopCamera();
+      setManualInput('');
     }
+  } else {
+    toast.error(`No machine found matching "${input}"`);
+  }
+};
+
+  /**
+   * CAMERA INITIALIZATION FIX:
+   * 1. Uses a longer delay to ensure the 'qr-reader' div is in the DOM.
+   * 2. Sets explicit aspectRatio to help PC/Mobile browsers initialize.
+   * 3. Catches 'NotAllowedError' to provide helpful feedback.
+   */
+  const startCamera = async () => {
     setIsInitializing(true);
     setShowCamera(true);
+    
+    // WAIT for React to render the "qr-reader" div
     setTimeout(async () => {
       try {
         const scanner = new Html5Qrcode("qr-reader");
         scannerRef.current = scanner;
+        
         await scanner.start(
-          { facingMode: 'environment' },
-          { fps: 15, qrbox: (vw, vh) => ({ width: Math.min(vw, vh) * 0.8, height: Math.min(vw, vh) * 0.8 }) },
-          (text) => handleCameraSuccess(text),
+          { facingMode: "environment" }, 
+          { 
+            fps: 25, 
+            qrbox: (vw, vh) => ({ width: Math.min(vw, vh) * 0.7, height: Math.min(vw, vh) * 0.7 }),
+            aspectRatio: 1.0 
+          },
+          (text) => handleIdSubmission(text),
           () => {} 
         );
         setIsInitializing(false);
-      } catch (err) {
+      } catch (err: any) {
+        console.error("Camera Error:", err);
         setIsInitializing(false);
         setShowCamera(false);
-        alert("Camera access denied.");
+        
+        // Provide specific advice based on the error type
+        if (err?.name === "NotAllowedError" || String(err).includes("denied")) {
+          toast.error("Access Denied: Click the 'Lock' icon in your browser address bar and set Camera to 'Allow'.");
+        } else {
+          toast.error("Camera failed. Ensure no other apps (Zoom/Teams) are using it.");
+        }
       }
-    }, 200); 
+    }, 500); 
   };
 
   const stopCamera = async () => {
     if (scannerRef.current) {
       const state = scannerRef.current.getState();
-      if (state === Html5QrcodeScannerState.SCANNING || state === Html5QrcodeScannerState.PAUSED) {
+      if (state === Html5QrcodeScannerState.SCANNING) {
         await scannerRef.current.stop().catch(() => {});
       }
       scannerRef.current = null;
     }
     setShowCamera(false);
+    setIsInitializing(false);
   };
 
   return (
     <div className="p-3 md:p-6 space-y-6 max-w-4xl mx-auto pb-24">
-      {/* 1. PERSISTENT GLOBAL AUTO-RUN TOGGLE */}
+      {/* HEADER & AUTO-RUN TOGGLE */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
         <div>
-          <h1 className="text-2xl md:text-3xl font-black text-slate-900 leading-tight">Scanning Terminal</h1>
-          <p className="text-sm md:text-base text-slate-500 font-medium tracking-tight">Active for Industrial WiFi/Wireless Scanners</p>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tighter uppercase leading-none">Universal Terminal</h1>
+          <p className="text-sm text-slate-500 font-medium tracking-tight mt-1">Scanner facility for Handheld, WiFi & Mobile.</p>
         </div>
         
-        <div className="flex items-center gap-3 bg-blue-600 text-white px-4 py-2 rounded-xl shadow-lg transition-all">
+        <div className="flex items-center gap-3 bg-blue-600 text-white px-4 py-2 rounded-xl shadow-lg border-b-4 border-blue-800 transition-all active:scale-95">
           <FastForward size={20} className={isAutoRunMode ? "animate-pulse" : ""} />
           <div className="flex flex-col">
             <span className="text-[10px] font-black uppercase tracking-tighter leading-none">Auto-Run Mode</span>
-            <span className="text-[8px] opacity-80 uppercase leading-none">Instant Update</span>
+            <span className="text-[8px] opacity-80 uppercase leading-none">Instant Activity</span>
           </div>
           <Switch 
             checked={isAutoRunMode} 
-            onCheckedChange={setIsAutoRunMode} // Updates state in AppContext
+            onCheckedChange={setIsAutoRunMode} 
             className="data-[state=checked]:bg-white data-[state=unchecked]:bg-blue-800"
           />
         </div>
       </div>
 
-      {/* 2. MODE INDICATOR */}
-      <Card className="bg-slate-50 border-slate-200">
-        <CardContent className="py-4 md:py-6">
-          <div className="flex items-center justify-around md:justify-center gap-4 md:gap-12">
-            <div 
-              onClick={() => setScanMode('CAMERA')}
-              className={`flex flex-col md:flex-row items-center gap-2 cursor-pointer ${scanMode === 'CAMERA' ? 'text-blue-600 font-bold' : 'text-slate-400'}`}
-            >
-              <Camera size={24} /> <span className="text-[10px] md:text-xs uppercase font-black tracking-widest">Mobile Cam</span>
-            </div>
-            
-            <div className="h-8 w-px bg-slate-200" />
+      {/* SEARCH / TYPING FACILITY */}
+      <Card className="shadow-sm border-blue-100 bg-blue-50/20">
+        <div className="p-4 flex gap-2">
+          {/* Search Input in Scanning.tsx */}
+            <Input 
+              placeholder="Type Machine ID..." 
+              value={manualInput} 
+              list="machine-list" // Link to the datalist below
+              onChange={(e) => setManualInput(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleIdSubmission(manualInput)}
+            />
 
-            <div 
-              onClick={() => setScanMode('BLUETOOTH')}
-              className={`flex flex-col md:flex-row items-center gap-2 cursor-pointer ${scanMode === 'BLUETOOTH' ? 'text-blue-600 font-bold' : 'text-gray-400'}`}
-            >
-              <Keyboard size={24} /> <span className="text-[10px] md:text-xs uppercase font-black tracking-widest">WiFi/Handheld</span>
-            </div>
+            <datalist id="machine-list">
+              {machines.map((m) => (
+                // Use ID as the value to ensure uniqueness
+                <option key={m.id} value={m.id}>
+                  {m.name} ({m.section})
+                </option>
+              ))}
+            </datalist>
+          <Button onClick={() => handleIdSubmission(manualInput)} className="bg-blue-600 h-14 px-6 shadow-md hover:bg-blue-700 transition-colors">
+            <Search size={24} />
+          </Button>
+        </div>
+      </Card>
+
+      {/* DEVICE SELECTOR */}
+      <Card className="bg-slate-50 border-slate-200">
+        <CardContent className="py-4 flex items-center justify-center gap-12">
+          <div 
+            onClick={() => { if(!isInitializing) setScanMode('CAMERA'); }}
+            className={`flex items-center gap-2 cursor-pointer transition-colors ${scanMode === 'CAMERA' ? 'text-blue-600 font-bold' : 'text-slate-400'}`}
+          >
+            <Camera size={24} /> <span className="text-xs uppercase font-black tracking-widest">Phone Cam</span>
+          </div>
+          <div className="h-8 w-px bg-slate-200" />
+          <div 
+            onClick={() => { if(!isInitializing) setScanMode('BLUETOOTH'); }}
+            className={`flex items-center gap-2 cursor-pointer transition-colors ${scanMode === 'BLUETOOTH' ? 'text-blue-600 font-bold' : 'text-gray-400'}`}
+          >
+            <Keyboard size={24} /> <span className="text-xs uppercase font-black tracking-widest">WiFi / Handheld</span>
           </div>
         </CardContent>
       </Card>
 
-      {/* 3. MANUAL SEARCH CARD */}
-      <Card className="shadow-sm border-blue-100 bg-blue-50/20">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-[10px] md:text-xs uppercase text-blue-600 font-black flex items-center gap-2">
-            <Search size={14} /> ID Lookup
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex gap-2">
-          <Input 
-            placeholder="Enter ID manually..." 
-            value={manualInput} 
-            list="machine-list"
-            className="font-mono font-bold uppercase h-12 md:h-10 bg-white"
-            onChange={(e) => setManualInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && setGlobalScanId(manualInput)}
-          />
-          <datalist id="machine-list">
-            {machines.map((m: any) => <option key={m.id} value={m.id}>{m.name}</option>)}
-          </datalist>
-          <Button onClick={() => setGlobalScanId(manualInput)} className="bg-blue-600 h-12 md:h-10 px-6">
-            <Search size={20} />
-          </Button>
-        </CardContent>
-      </Card>
-
-      {/* 4. SCANNER DISPLAY AREA */}
-      <Card className={`min-h-[350px] md:min-h-[450px] flex items-center justify-center border-2 border-dashed ${scanMode === 'BLUETOOTH' ? 'border-blue-400 bg-blue-50/10' : 'border-slate-200'}`}>
+      {/* SCANNER VIEWPORT */}
+      <Card className={`min-h-[400px] flex items-center justify-center border-2 border-dashed transition-all duration-500 overflow-hidden ${
+        isAutoRunMode ? 'border-green-400 bg-green-50/5' : 'border-blue-400 bg-blue-50/5'
+      }`}>
         <CardContent className="w-full text-center p-4">
           {scanMode === 'CAMERA' ? (
             <div className="space-y-4 w-full max-w-sm mx-auto">
               {!showCamera ? (
-                <Button onClick={startCamera} size="lg" className="w-full py-12 text-xl rounded-2xl shadow-xl flex flex-col gap-3">
-                  <Camera size={32} /> <span>Open Camera</span>
+                <Button onClick={startCamera} size="lg" className="w-full py-16 rounded-[32px] flex flex-col gap-4 shadow-xl transition-transform active:scale-95 bg-white border-2 border-blue-100 text-blue-600 hover:bg-blue-50">
+                  <Camera size={48} /> <span className="font-black uppercase tracking-widest text-xl">Open Camera</span>
                 </Button>
               ) : (
                 <div className="relative">
-                  <div id="qr-reader" className="overflow-hidden rounded-2xl border-4 border-white shadow-2xl bg-slate-100 min-h-[300px]"></div>
+                  <div id="qr-reader" className={`overflow-hidden rounded-[32px] border-4 shadow-2xl bg-slate-100 min-h-[300px] ${isAutoRunMode ? 'border-green-500' : 'border-blue-600'}`}></div>
                   {isInitializing && (
-                    <div className="absolute inset-0 flex items-center justify-center bg-slate-100/90 rounded-2xl">
-                       <Loader2 className="animate-spin text-blue-600 w-10 h-10" />
+                    <div className="absolute inset-0 flex items-center justify-center bg-slate-100/90 rounded-[32px]">
+                       <Loader2 className="animate-spin text-blue-600 w-12 h-12" />
                     </div>
                   )}
-                  <Button variant="destructive" onClick={stopCamera} className="w-full mt-6 h-12 font-black uppercase tracking-widest">
-                    <X className="w-5 h-5 mr-2" /> Stop Scanner
+                  <Button variant="destructive" onClick={stopCamera} className="w-full mt-6 h-14 font-black uppercase shadow-lg tracking-widest text-lg rounded-2xl">
+                    <X className="w-6 h-6 mr-2" /> Stop Scanner
                   </Button>
                 </div>
               )}
             </div>
           ) : (
             <div className="space-y-6 py-10">
-              <div className="bg-blue-600 w-24 h-24 md:w-32 md:h-32 rounded-full flex items-center justify-center mx-auto text-white animate-pulse shadow-2xl">
-                <Zap size={48} fill="currentColor" />
+              <div className={`w-28 h-28 md:w-36 md:h-36 rounded-[40px] flex items-center justify-center mx-auto text-white animate-pulse shadow-2xl transition-colors ${
+                isAutoRunMode ? 'bg-green-500' : 'bg-blue-600'
+              }`}>
+                <Zap size={64} fill="currentColor" />
               </div>
-              <div className="space-y-1">
-                <p className="text-xl md:text-2xl font-black text-slate-800 tracking-tight uppercase">WiFi Scanner Ready</p>
-                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Listening globally on all pages</p>
+              <div className="space-y-2">
+                <p className="text-2xl md:text-3xl font-black text-slate-800 uppercase tracking-tighter leading-tight">
+                  {isAutoRunMode ? 'INSTANT ACTIVITY LOGGING' : 'UNIVERSAL SCANNER READY'}
+                </p>
+                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest italic">
+                  Device: {scanMode === 'BLUETOOTH' ? 'Industrial Handheld' : 'Mobile Camera'}
+                </p>
               </div>
             </div>
           )}

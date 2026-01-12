@@ -7,13 +7,21 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import { Plus, Trash2, Settings2, Printer, Loader2, FileDown, Layers, MapPin, FileSpreadsheet } from 'lucide-react';
+import { Plus, Trash2, Settings2, Printer, Loader2, Layers, MapPin, FileSpreadsheet, Activity, Wrench } from 'lucide-react';
 import Barcode from 'react-barcode';
 import { Machine } from '../types';
 import { jsPDF } from 'jspdf';
 import * as XLSX from 'xlsx';
 
 const NEEDLE_TYPES = ["DBx1", "DPx5", "DCx27", "TVx7", "UY128GAS", "TQx1"];
+
+// NEW: Operational Status Constants for physical health management
+const OPERATIONAL_STATUS_OPTIONS = [
+  { id: 'WORKING', label: 'Working', color: 'bg-green-500' },
+  { id: 'HALF_WORKING', label: 'Half Working', color: 'bg-amber-500' },
+  { id: 'BREAKDOWN', label: 'Breakdown', color: 'bg-red-500' },
+  { id: 'REMOVED', label: 'Permanently Removed', color: 'bg-slate-900' },
+];
 
 export function MachineRegistry() {
   const { machines = [], sections = [], machineTypes = [], addMachine, deleteMachine, addSection, deleteSection, addMachineType, deleteMachineType } = useApp();
@@ -40,6 +48,9 @@ export function MachineRegistry() {
   const [companyId, setCompanyId] = useState('');
   const [barcodeValue, setBarcodeValue] = useState('');
   const [machineValue, setMachineValue] = useState('');
+  
+  // NEW: Operational Status State for the registration form
+  const [operationalStatus, setOperationalStatus] = useState('WORKING');
 
   const [newSectionName, setNewSectionName] = useState('');
   const [newTypeName, setNewTypeName] = useState('');
@@ -54,11 +65,14 @@ export function MachineRegistry() {
   const availableTypesForSelectedSection = useMemo(() => machineTypes.filter(t => t.sectionId === section), [section, machineTypes]);
   const needsNeedleInfo = useMemo(() => type.toUpperCase().includes('SEWING') || type.toUpperCase().includes('SNLS'), [type]);
 
-  // --- EXCEL EXPORT LOGIC ---
+  // --- UPDATED: EXCEL EXPORT LOGIC ---
   const downloadInventoryExcel = () => {
-    // Determine which machines to export (respect current filter)
     const dataToExport = filteredTableMachines.map(m => ({
       'Machine ID': m.id,
+      // CORRECTED: Operational Status is the physical health
+      'Operational Status': (m as any).operationalStatus || 'WORKING', 
+      // CORRECTED: Current Activity is only RUNNING or IDLE
+      'Current Activity': m.status || 'IDLE',
       'Location': (m as any).location || 'N/A',
       'Company ID': (m as any).companyId || 'N/A',
       'Barcode Value': (m as any).barcodeValue || 'N/A',
@@ -73,26 +87,21 @@ export function MachineRegistry() {
       'Purchasing Date': (m as any).purchaseDate || 'N/A',
       'Department': (m as any).dept || 'N/A',
       'Needle Size': (m as any).needleSize || 'N/A',
-      'Needle Type': (m as any).needleType || 'N/A',
-      'Current Status': m.status
+      'Needle Type': (m as any).needleType || 'N/A'
     }));
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet([]);
 
-    // Add professional Heading and Metadata
     XLSX.utils.sheet_add_aoa(ws, [
       ["Eskimo Fashions (Pvt) Ltd machine inventory report"],
       [`Export Date: ${new Date().toLocaleDateString()}`],
       [`Filter: ${selectedSectionFilter === 'ALL' ? 'All Sections' : sections.find(s => s.id === selectedSectionFilter)?.name}`],
-      [] // Spacer row
+      [] 
     ], { origin: "A1" });
 
-    // Add the actual data starting from Row 5
     XLSX.utils.sheet_add_json(ws, dataToExport, { origin: "A5", skipHeader: false });
-
-    // Set column widths for readability
-    const wscols = Array(17).fill({ wch: 20 });
+    const wscols = Array(18).fill({ wch: 22 });
     ws['!cols'] = wscols;
 
     XLSX.utils.book_append_sheet(wb, ws, "Inventory");
@@ -136,26 +145,6 @@ export function MachineRegistry() {
     setIsGenerating(false);
   };
 
-  const downloadAllBarcodes = async () => {
-    setIsGenerating(true);
-    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [50, 30] });
-    let pageCount = 0;
-    for (const machine of machines) {
-      const imgData = await fetchActiveCanvas(machine.id);
-      if (imgData) {
-        if (pageCount > 0) doc.addPage([50, 30], 'landscape');
-        doc.addImage(imgData, 'PNG', 5, 2, 40, 15);
-        doc.setFontSize(10);
-        doc.text(machine.id, 25, 22, { align: 'center' });
-        doc.setFontSize(7);
-        doc.text(`${machine.section} | ${machine.type}`, 25, 26, { align: 'center' });
-        pageCount++;
-      }
-    }
-    doc.save(`All_Factory_Barcodes.pdf`);
-    setIsGenerating(false);
-  };
-
   const generateSingleBarcodePDF = async (machine: Machine) => {
     setIsGenerating(true);
     const imgData = await fetchActiveCanvas(machine.id);
@@ -176,13 +165,17 @@ export function MachineRegistry() {
     e.preventDefault();
     await addMachine({ 
       section, type, brand, purchaseDate, serialNo, faNumber, modelNo, dept, name, 
-      status: 'IDLE', location, companyId, barcodeValue, machineValue,
+      status: 'IDLE', // Default Production Activity
+      operationalStatus, // Initial Physical Health
+      location, companyId, barcodeValue, machineValue,
       needleSize: needsNeedleInfo ? needleSize : 'N/A',
       needleType: needsNeedleInfo ? needleType : 'N/A'
     });
+    // Reset Form
     setSection(''); setType(''); setBrand(''); setPurchaseDate(''); setSerialNo(''); 
     setFaNumber(''); setModelNo(''); setDept(''); setName(''); setNeedleSize(''); 
     setNeedleType(''); setLocation(''); setCompanyId(''); setBarcodeValue(''); setMachineValue('');
+    setOperationalStatus('WORKING');
     setShowAddForm(false);
   };
 
@@ -200,11 +193,10 @@ export function MachineRegistry() {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Machine Registry</h1>
-          <p className="text-slate-500 font-medium">Professional Asset Management</p>
+          <p className="text-slate-500 font-medium tracking-tighter">Physical Asset & Health Management</p>
         </div>
         
         <div className="flex flex-wrap items-center gap-2">
-          {/* SECTION FILTER DROPDOWN */}
           <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border mr-2">
             <Layers className="w-4 h-4 ml-2 text-slate-400" />
             <Select value={selectedSectionFilter} onValueChange={setSelectedSectionFilter}>
@@ -241,10 +233,10 @@ export function MachineRegistry() {
           <Table>
             <TableHeader className="bg-slate-50">
               <TableRow>
-                <TableHead className="font-bold text-[11px] uppercase">ID / FA NO</TableHead>
+                <TableHead className="font-bold text-[11px] uppercase">ID / Health</TableHead>
                 <TableHead className="font-bold text-[11px] uppercase">Machine Details</TableHead>
                 <TableHead className="font-bold text-[11px] uppercase">Section</TableHead>
-                <TableHead className="font-bold text-[11px] uppercase">Registration</TableHead>
+                <TableHead className="font-bold text-[11px] uppercase">Activity</TableHead>
                 <TableHead className="text-right font-bold pr-6">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -253,7 +245,12 @@ export function MachineRegistry() {
                 <TableRow key={machine.id} className="hover:bg-slate-50/50">
                   <TableCell>
                     <div className="font-mono font-bold text-blue-700 uppercase text-xs">{machine.id}</div>
-                    <div className="text-[10px] text-slate-400 font-bold">FA: {(machine as any).faNumber}</div>
+                    {/* NEW: Operational Status Badge (Physical Health) */}
+                    <div className={`mt-1 px-2 py-0.5 rounded text-[8px] font-black text-white w-fit uppercase ${
+                      OPERATIONAL_STATUS_OPTIONS.find(o => o.id === (machine as any).operationalStatus)?.color || 'bg-green-500'
+                    }`}>
+                      {(machine as any).operationalStatus || 'WORKING'}
+                    </div>
                   </TableCell>
                   <TableCell>
                     <div className="font-bold uppercase text-xs">{machine.name}</div>
@@ -265,7 +262,10 @@ export function MachineRegistry() {
                     <div className="text-[10px] text-slate-400 font-medium">{machine.type}</div>
                   </TableCell>
                   <TableCell>
-                     <div className="text-xs font-medium">Purchased: {(machine as any).purchaseDate || 'N/A'}</div>
+                     {/* Production Activity (Running/Idle) */}
+                     <div className={`text-[10px] font-black uppercase ${machine.status === 'RUNNING' ? 'text-green-600' : 'text-red-500'}`}>
+                       {machine.status || 'IDLE'}
+                     </div>
                      <div className="text-[10px] text-slate-400 font-mono">SN: {(machine as any).serialNo}</div>
                   </TableCell>
                   <TableCell className="text-right pr-6">
@@ -284,15 +284,30 @@ export function MachineRegistry() {
         </CardContent>
       </Card>
 
-      {/* Registration and Config Dialogs remain the same as previous functional version */}
       <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
-        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
+        <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="text-xl font-bold uppercase">Register Factory Asset</DialogTitle>
+            <DialogTitle className="text-xl font-bold uppercase tracking-tighter">Register Factory Asset</DialogTitle>
             <DialogDescription className="hidden">Form to register a new machine asset</DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4 pt-4">
-            {/* ... Form content ... */}
+            {/* NEW: Health Status Selector at Top of Form */}
+            <div className="space-y-2 bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
+              <Label className="text-[10px] font-black uppercase text-blue-600 flex items-center gap-2">
+                <Wrench size={14} /> Initial Machine Operational Health
+              </Label>
+              <Select value={operationalStatus} onValueChange={setOperationalStatus}>
+                <SelectTrigger className="bg-white">
+                  <SelectValue placeholder="Select Health Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  {OPERATIONAL_STATUS_OPTIONS.map(opt => (
+                    <SelectItem key={opt.id} value={opt.id}>{opt.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border">
               <div className="space-y-2">
                 <Label className="text-[10px] font-black uppercase text-blue-600">Location</Label>
@@ -311,6 +326,7 @@ export function MachineRegistry() {
                 <Input placeholder="Enter Company ID" value={companyId} onChange={e => setCompanyId(e.target.value)} />
               </div>
             </div>
+            
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label className="text-[10px] font-black uppercase text-slate-400">Barcode Value</Label>
@@ -321,6 +337,7 @@ export function MachineRegistry() {
                 <Input placeholder="Asset Value" value={machineValue} onChange={e => setMachineValue(e.target.value)} />
               </div>
             </div>
+
             <div className="grid grid-cols-2 gap-4 border-t pt-4">
               <div className="space-y-2">
                 <Label className="text-[10px] font-black uppercase text-slate-400">Section</Label>
@@ -337,6 +354,7 @@ export function MachineRegistry() {
                 </Select>
               </div>
             </div>
+
             <div className="grid grid-cols-2 gap-4">
               <Input placeholder="Machine Name" value={name} onChange={e => setName(e.target.value)} required />
               <Input placeholder="Brand" value={brand} onChange={e => setBrand(e.target.value)} required />
@@ -349,6 +367,7 @@ export function MachineRegistry() {
               <Input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)} required />
               <Input placeholder="Model Number" value={modelNo} onChange={e => setModelNo(e.target.value)} required />
             </div>
+
             {needsNeedleInfo && (
               <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
                 <div className="space-y-2">
@@ -371,7 +390,7 @@ export function MachineRegistry() {
       </Dialog>
 
       <Dialog open={showManageConfig} onOpenChange={setShowManageConfig}>
-        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto" aria-describedby={undefined}>
+        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Structure Configuration</DialogTitle></DialogHeader>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-4">
             <div className="space-y-4">

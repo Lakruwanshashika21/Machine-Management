@@ -17,7 +17,7 @@ interface AppContextType {
   sections: Section[];
   machineTypes: MachineType[];
   addMachine: (machineData: any) => Promise<void>;
-  updateMachineStatus: (machineId: string, status: string) => Promise<void>;
+  updateMachineStatus: (machineId: string, value: string, fieldName?: 'status' | 'operationalStatus') => Promise<void>;
   deleteMachine: (machineId: string) => Promise<void>;
   addSection: (name: string) => Promise<void>;
   deleteSection: (id: string) => Promise<void>;
@@ -28,7 +28,6 @@ interface AppContextType {
   auditLogs: AuditLog[];
   globalStartDay: () => Promise<void>;
   loading: boolean;
-  // New Global Scanner States
   isAutoRunMode: boolean;
   setIsAutoRunMode: (val: boolean) => void;
   globalScanId: string | null;
@@ -46,80 +45,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [scanMode, setScanMode] = useState<ScanMode>('BLUETOOTH');
   const [loading, setLoading] = useState(true);
-
-  // New persistent scanner states
   const [isAutoRunMode, setIsAutoRunMode] = useState(false);
   const [globalScanId, setGlobalScanId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  useEffect(() => {
-    return onAuthStateChanged(auth, async (firebaseUser) => {
-      if (firebaseUser) {
-        const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
-        setUser({ ...firebaseUser, ...userDoc.data() });
-      } else {
-        setUser(null);
-      }
-      setLoading(false);
-    });
-  }, []);
+  // --- 1. DEFINE HANDLER FUNCTIONS FIRST ---
 
-  useEffect(() => {
-    const unsubMachines = onSnapshot(collection(db, "machines"), (s) => 
-      setMachines(s.docs.map(d => ({ id: d.id, ...d.data() } as Machine))));
-    
-    const unsubSections = onSnapshot(collection(db, "sections"), (s) => 
-      setSections(s.docs.map(d => ({ id: d.id, ...d.data() } as Section))));
-    
-    const unsubTypes = onSnapshot(collection(db, "machineTypes"), (s) => 
-      setMachineTypes(s.docs.map(d => ({ id: d.id, ...d.data() } as MachineType))));
-
-    const qLogs = query(collection(db, "auditLogs"), orderBy("timestamp", "desc"));
-    const unsubLogs = onSnapshot(qLogs, (s) => 
-      setAuditLogs(s.docs.map(d => ({ id: d.id, ...d.data() } as AuditLog))));
-
-    return () => { unsubMachines(); unsubSections(); unsubTypes(); unsubLogs(); };
-  }, []);
-
-  // Global Hardware Scanner Listener
-  useEffect(() => {
-    let buffer = '';
-    
-    const handleKeyDown = async (e: KeyboardEvent) => {
-      // Prevent scanner interference while typing in actual inputs
-      if (isProcessing || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      if (e.key === 'Enter') {
-        if (buffer.length > 2) {
-          const cleanId = buffer.trim().toUpperCase();
-          const exists = machines.find(m => m.id === cleanId);
-          
-          if (exists) {
-            setIsProcessing(true); // Lock input to swallow extra 'Enter' signals
-            
-            if (isAutoRunMode) {
-              await updateMachineStatus(cleanId, 'RUNNING');
-              setTimeout(() => setIsProcessing(false), 500); // Quick reset for auto-run
-            } else {
-              setGlobalScanId(cleanId);
-              // Longer cooldown to prevent immediate dialog closing
-              setTimeout(() => setIsProcessing(false), 1000); 
-            }
-          }
-          buffer = ''; 
-        }
-      } else {
-        if (e.key.length === 1) buffer += e.key;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [machines, isAutoRunMode, isProcessing]);
-
-  // Handlers
   const addSection = async (name: string) => {
     const cleanName = name.trim().toUpperCase();
     await setDoc(doc(db, "sections", cleanName), { name: cleanName });
@@ -138,60 +69,93 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await deleteDoc(doc(db, "machineTypes", id));
   };
 
-  const addMachine = async (data: any) => {
-    const count = machines.filter(m => m.section === data.section && m.type === data.type).length;
-    const newId = `${data.section}-${data.type}-${(count + 1).toString().padStart(3, '0')}`;
+  const updateMachineStatus = async (machineId: string, value: string, fieldName: 'status' | 'operationalStatus' = 'status') => {
+    const machine = machines.find(m => m.id === machineId);
+    if (!machine) return;
+    const time = new Date().toISOString();
     
-    await setDoc(doc(db, "machines", newId), {
-      ...data,
-      id: newId,
-      status: 'IDLE',
-      scans: {},
-      lastUpdated: new Date().toISOString()
+    // FIXED: Correct dynamic routing
+    const updateData: any = { [fieldName]: value, lastUpdated: time };
+
+    if (fieldName === 'status') {
+      const scans = { ...machine.scans };
+      const slot = !scans.scan1 ? 'scan1' : !scans.scan2 ? 'scan2' : 'scan3';
+      updateData.scans = { ...scans, [slot]: { time, status: value, userId: user?.email } };
+    }
+
+    await updateDoc(doc(db, "machines", machineId), updateData);
+    await addDoc(collection(db, "auditLogs"), {
+      timestamp: time, machineId, userName: user?.name || user?.email,
+      action: `Updated ${fieldName}`, newStatus: value
     });
   };
 
-  const updateMachineStatus = async (machineId: string, status: string) => {
-    const machine = machines.find(m => m.id === machineId);
-    if (!machine) return;
-
-    const time = new Date().toISOString();
-    const scans = { ...machine.scans };
-    
-    // Determine next scan slot
-    const slot = !scans.scan1 ? 'scan1' : !scans.scan2 ? 'scan2' : 'scan3';
-
-    const updatedScans = {
-      ...scans,
-      [slot]: { time, status: status === 'NOT_WORKING' ? 'NA' : status, userId: user?.email }
-    };
-
-    await updateDoc(doc(db, "machines", machineId), {
-      status,
-      scans: updatedScans,
-      lastUpdated: time
-    });
-
-    await addDoc(collection(db, "auditLogs"), {
-      timestamp: time,
-      machineId,
-      userName: user?.name || user?.email,
-      action: `Scanned slot ${slot}`,
-      newStatus: status
+  const addMachine = async (data: any) => {
+    const count = machines.filter(m => m.section === data.section && m.type === data.type).length;
+    const newId = `${data.section}-${data.type}-${(count + 1).toString().padStart(3, '0')}`;
+    await setDoc(doc(db, "machines", newId), {
+      ...data, id: newId, status: 'IDLE', operationalStatus: data.operationalStatus || 'WORKING',
+      scans: {}, lastUpdated: new Date().toISOString()
     });
   };
 
   const globalStartDay = async () => {
-    const promises = machines.map(m => {
-      const nextStatus = m.status === 'NOT_WORKING' ? 'NOT_WORKING' : 'IDLE';
-      return updateDoc(doc(db, "machines", m.id), {
-        status: nextStatus,
-        scans: {},
-        lastUpdated: new Date().toISOString()
-      });
-    });
+    const promises = machines.map(m => updateDoc(doc(db, "machines", m.id), {
+      status: 'IDLE', scans: {}, lastUpdated: new Date().toISOString()
+    }));
     await Promise.all(promises);
   };
+
+  // --- 2. EFFECTS ---
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        const userDoc = await getDoc(doc(db, "users", firebaseUser.uid));
+        setUser({ ...firebaseUser, ...userDoc.data() });
+      } else { setUser(null); }
+      setLoading(false);
+    });
+  }, []);
+
+  useEffect(() => {
+    const unsubMachines = onSnapshot(collection(db, "machines"), (s) => setMachines(s.docs.map(d => ({ id: d.id, ...d.data() } as Machine))));
+    const unsubSections = onSnapshot(collection(db, "sections"), (s) => setSections(s.docs.map(d => ({ id: d.id, ...d.data() } as Section))));
+    const unsubTypes = onSnapshot(collection(db, "machineTypes"), (s) => setMachineTypes(s.docs.map(d => ({ id: d.id, ...d.data() } as MachineType))));
+    const qLogs = query(collection(db, "auditLogs"), orderBy("timestamp", "desc"));
+    const unsubLogs = onSnapshot(qLogs, (s) => setAuditLogs(s.docs.map(d => ({ id: d.id, ...d.data() } as AuditLog))));
+    return () => { unsubMachines(); unsubSections(); unsubTypes(); unsubLogs(); };
+  }, []);
+
+  // Global Hardware Scanner Listener
+  useEffect(() => {
+    let buffer = '';
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      if (isProcessing || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'Enter') {
+        if (buffer.length > 2) {
+          const cleanId = buffer.trim().toUpperCase();
+          // Fuzzy search for machines like "Aurora"
+          const machine = machines.find(m => 
+            m.id.toUpperCase().includes(cleanId) || m.name?.toUpperCase().includes(cleanId)
+          );
+          if (machine) {
+            setIsProcessing(true);
+            if (isAutoRunMode) {
+              await updateMachineStatus(machine.id, 'RUNNING', 'status');
+              setTimeout(() => setIsProcessing(false), 500);
+            } else {
+              setGlobalScanId(machine.id);
+              setTimeout(() => setIsProcessing(false), 1000);
+            }
+          }
+          buffer = ''; 
+        }
+      } else if (e.key.length === 1) { buffer += e.key; }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [machines, isAutoRunMode, isProcessing]);
 
   return (
     <AppContext.Provider value={{ 
@@ -199,7 +163,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
       addMachine, updateMachineStatus, deleteMachine: (id) => deleteDoc(doc(db, "machines", id)),
       addSection, deleteSection, addMachineType, deleteMachineType,
       scanMode, setScanMode, auditLogs, globalStartDay, loading,
-      // Global Scanner Exports
       isAutoRunMode, setIsAutoRunMode, globalScanId, setGlobalScanId, isProcessing
     }}>
       {!loading && children}
