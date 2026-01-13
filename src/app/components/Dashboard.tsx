@@ -6,7 +6,7 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Table, TableBody, TableCell, TableRow } from './ui/table';
 import { PieChart, Pie, Cell, ResponsiveContainer, Legend, Tooltip } from 'recharts';
-import { Download, FileSpreadsheet, Calendar, ChevronDown, ChevronRight, Monitor, Minimize, Code2 } from 'lucide-react';
+import { Download, FileSpreadsheet, Calendar, ChevronDown, ChevronRight, Monitor, Minimize, Code2, Wrench } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -14,6 +14,7 @@ import * as XLSX from 'xlsx';
 const STATUS_COLORS = {
   RUNNING: '#22c55e', 
   IDLE: '#ef4444', 
+  MAINTAIN: '#f59e0b', // Amber for breakdown/removed
 };
 
 export function Dashboard() {
@@ -30,40 +31,45 @@ export function Dashboard() {
     return () => clearInterval(timer);
   }, []);
 
-  
-  // 1. UPDATED: Filtering logic to respect the selectedDate specifically
-    const filteredMachines = useMemo(() => {
-      return machines
-        .filter((m) => m.status !== 'NOT_WORKING')
-        .map((m) => {
-          // Compare the machine's timestamp with the selected dashboard date
-          const isUpdatedOnDate = m.lastUpdated?.startsWith(selectedDate);
-          
-          return {
-            ...m,
-            // Override status to IDLE if no activity was recorded on this specific date
-            status: isUpdatedOnDate ? m.status : 'IDLE',
-            // Filter sub-scan data to only show results from the selected date
-            displayScans: isUpdatedOnDate ? m.scans : {
-              scan1: { status: 'IDLE' },
-              scan2: { status: 'IDLE' },
-              scan3: { status: 'IDLE' }
-            }
-          };
-        });
-    }, [machines, selectedDate]); // Recalculate whenever machines or selectedDate change
+  const filteredMachines = useMemo(() => {
+    return machines
+      .filter((m) => m.status !== 'NOT_WORKING')
+      .map((m) => {
+        const isUpdatedOnDate = m.lastUpdated?.startsWith(selectedDate);
+        return {
+          ...m,
+          status: isUpdatedOnDate ? m.status : 'IDLE',
+          displayScans: isUpdatedOnDate ? m.scans : {
+            scan1: { status: 'IDLE' },
+            scan2: { status: 'IDLE' },
+            scan3: { status: 'IDLE' }
+          }
+        };
+      });
+  }, [machines, selectedDate]);
 
+  // Updated Stats for 5 KPIs
   const stats = useMemo(() => {
-    const running = filteredMachines.filter((m) => m.status === 'RUNNING').length;
-    const idle = filteredMachines.filter((m) => m.status === 'IDLE').length;
+    const maintain = filteredMachines.filter(m => 
+      (m as any).operationalStatus === 'BREAKDOWN' || (m as any).operationalStatus === 'REMOVED'
+    ).length;
+    
+    const activeFleet = filteredMachines.filter(m => 
+      (m as any).operationalStatus !== 'BREAKDOWN' && (m as any).operationalStatus !== 'REMOVED'
+    );
+
+    const running = activeFleet.filter((m) => m.status === 'RUNNING').length;
+    const idle = activeFleet.filter((m) => m.status === 'IDLE').length;
     const total = filteredMachines.length;
-    const efficiency = total > 0 ? Math.round((running / total) * 100) : 0;
-    return { running, idle, total, efficiency };
+    const efficiency = activeFleet.length > 0 ? Math.round((running / activeFleet.length) * 100) : 0;
+    
+    return { total, running, idle, maintain, efficiency };
   }, [filteredMachines]);
 
   const pieData = [
     { name: 'Running', value: stats.running, color: STATUS_COLORS.RUNNING },
     { name: 'Idle', value: stats.idle, color: STATUS_COLORS.IDLE },
+    { name: 'Maintain', value: stats.maintain, color: STATUS_COLORS.MAINTAIN },
   ];
 
   const toggleSection = (id: string) => {
@@ -75,14 +81,24 @@ export function Dashboard() {
   };
 
   const calculateGroupStats = (machineList: any[]) => {
-    const running = machineList.filter(m => m.status === 'RUNNING').length;
-    const idle = machineList.filter(m => m.status === 'IDLE').length;
-    const total = machineList.length; // Ensure this is captured
+    const maintain = machineList.filter(m => 
+      m.operationalStatus === 'BREAKDOWN' || m.operationalStatus === 'REMOVED'
+    ).length;
+
+    const activeList = machineList.filter(m => 
+      m.operationalStatus !== 'BREAKDOWN' && m.operationalStatus !== 'REMOVED'
+    );
+
+    const running = activeList.filter(m => m.status === 'RUNNING').length;
+    const idle = activeList.filter(m => m.status === 'IDLE').length;
+    const total = machineList.length;
+    
     return { 
       total, 
       running, 
       idle, 
-      utilization: total > 0 ? Math.round((running / total) * 100) : 0 
+      maintain,
+      utilization: activeList.length > 0 ? Math.round((running / activeList.length) * 100) : 0 
     };
   };
 
@@ -108,78 +124,52 @@ export function Dashboard() {
     return age >= 0 ? age : 0;
   };
 
-  // 2. UPDATED: PDF Download to use the filtered data
-    const downloadPDF = () => {
-      const doc = new jsPDF();
-      doc.setFontSize(18);
-      doc.text("Daily Machine Scan History", 14, 20);
-      doc.text(`Report Date: ${selectedDate}`, 14, 28);
+  const downloadPDF = () => {
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text("Daily Machine Scan History", 14, 20);
+    doc.text(`Report Date: ${selectedDate}`, 14, 28);
 
-      // Use the filteredMachines list which is already calculated for the selectedDate
-      const tableData = filteredMachines.map(m => [
-        m.id, 
-        m.name, 
-        m.status, 
-        m.displayScans?.scan1?.status || 'IDLE', 
-        m.displayScans?.scan2?.status || 'IDLE', 
-        m.displayScans?.scan3?.status || 'IDLE'
-      ]);
+    const tableData = filteredMachines.map(m => [
+      m.id, 
+      m.name, 
+      (m as any).operationalStatus === 'BREAKDOWN' || (m as any).operationalStatus === 'REMOVED' ? 'MAINTAIN' : m.status, 
+      m.displayScans?.scan1?.status || 'IDLE', 
+      m.displayScans?.scan2?.status || 'IDLE', 
+      m.displayScans?.scan3?.status || 'IDLE'
+    ]);
 
-      autoTable(doc, { 
-        head: [['ID', 'Name', 'Status', 'S1', 'S2', 'S3']], 
-        body: tableData, 
-        startY: 35,
-        theme: 'grid',
-        headStyles: { fillColor: [15, 23, 42] } // Professional slate header
-      });
+    autoTable(doc, { 
+      head: [['ID', 'Name', 'Status', 'S1', 'S2', 'S3']], 
+      body: tableData, 
+      startY: 35,
+      theme: 'grid',
+      headStyles: { fillColor: [15, 23, 42] }
+    });
 
-      doc.save(`Scan_History_${selectedDate}.pdf`);
-    };
+    doc.save(`Scan_History_${selectedDate}.pdf`);
+  };
+
   const downloadExcel = () => {
-    // 1. Prepare Detailed Data
     const detailedData = filteredMachines.map(m => ({
       'Machine ID': m.id,
       'Section': sections.find(s => s.id === m.section)?.name || m.section,
-      'Brand': m.brand || 'N/A',
-      'Serial NO': m.serialNo || 'N/A',
-      'FA Number': m.faNumber || 'N/A',
-      'Machine Type': m.type,
-      'Purchasing Date': m.purchaseDate || 'N/A',
+      'Status': (m as any).operationalStatus || 'WORKING',
+      'Activity': m.status,
+      'Maintain': (m as any).operationalStatus === 'BREAKDOWN' || (m as any).operationalStatus === 'REMOVED' ? 'Yes' : 'No',
       'Age (Years)': calculateAge(m.purchaseDate),
-      'Running': m.status === 'RUNNING' ? 1 : 0,
-      'Idle': m.status === 'IDLE' ? 1 : 0,
       'Utilization %': m.status === 'RUNNING' ? '100%' : '0%',
     }));
 
     const wb = XLSX.utils.book_new();
-    
-    // Create Worksheet
     const ws = XLSX.utils.json_to_sheet([]);
-
-    // --- Header Formatting Logic ---
-    // A1: Title
-    // A2: Date
-    // A4: Table Headers (Light Blue/Bold Style is handled during File Viewer opening, 
-    // but we set the structure here)
     XLSX.utils.sheet_add_aoa(ws, [
       ["Eskimo Fashions (Pvt) Ltd - Machine Inventory"],
       [`Date: ${selectedDate}`],
-      [] // Spacer
+      []
     ], { origin: "A1" });
-
-    // Add JSON data starting from Row 4
     XLSX.utils.sheet_add_json(ws, detailedData, { origin: "A4", skipHeader: false });
-
-    // Set Column Widths for better visibility
-    const wscols = [
-      {wch: 20}, {wch: 15}, {wch: 15}, {wch: 20}, {wch: 20}, 
-      {wch: 20}, {wch: 15}, {wch: 12}, {wch: 10}, {wch: 10}, {wch: 15}
-    ];
-    ws['!cols'] = wscols;
-
     XLSX.utils.book_append_sheet(wb, ws, "Inventory Report");
-
-    // Generate File
     XLSX.writeFile(wb, `Machine_Inventory_Report_${selectedDate}.xlsx`);
   };
 
@@ -193,7 +183,7 @@ export function Dashboard() {
       <div className={`flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white p-6 rounded-xl shadow-sm border ${isDisplayMode ? 'hidden' : ''}`}>
         <div>
           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Machine Inventory</h1>
-          <p className="text-slate-500 font-medium tracking-tight">Machine Utilizations</p>
+          <p className="text-slate-500 font-medium tracking-tight">Factory Performance Dashboard</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="outline" className="border-blue-600 text-blue-600 font-bold" onClick={enableTVMode}>
@@ -226,12 +216,13 @@ export function Dashboard() {
         </div>
       )}
 
-      {/* KPI TILES */}
-      <div className={`grid grid-cols-2 ${isDisplayMode ? 'lg:grid-cols-4 gap-8 mb-10' : 'md:grid-cols-4 gap-4'}`}>
+      {/* 5 KPI TILES */}
+      <div className={`grid grid-cols-2 ${isDisplayMode ? 'lg:grid-cols-5 gap-8 mb-10' : 'md:grid-cols-5 gap-4'}`}>
         {[
-          { label: 'Total', val: stats.total, color: isDisplayMode ? 'text-white' : 'text-slate-900' },
+          { label: 'Total Assets', val: stats.total, color: isDisplayMode ? 'text-white' : 'text-slate-900' },
           { label: 'Running', val: stats.running, color: 'text-green-500' },
           { label: 'Idle', val: stats.idle, color: 'text-red-500' },
+          { label: 'Maintain', val: stats.maintain, color: 'text-amber-500' },
           { label: 'Utilization', val: `${stats.efficiency}%`, color: 'text-blue-500' }
         ].map((card, i) => (
           <Card key={i} className={`${isDisplayMode ? 'bg-slate-900 border-slate-800 shadow-2xl' : 'border-none shadow-md overflow-hidden'}`}>
@@ -244,9 +235,9 @@ export function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* CHART */}
+        {/* PIE CHART - INCLUDES MAINTAIN */}
         <Card className={`lg:col-span-4 shadow-xl border-t-4 border-t-blue-500 ${isDisplayMode ? 'bg-slate-900 border-slate-800' : ''}`}>
-          <CardHeader><CardTitle className={isDisplayMode ? 'text-white font-black' : 'font-black'}>Utilization</CardTitle></CardHeader>
+          <CardHeader><CardTitle className={isDisplayMode ? 'text-white font-black' : 'font-black'}>Status Overview</CardTitle></CardHeader>
           <CardContent>
             <div className="h-[400px] w-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -262,16 +253,15 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* TREE VIEW - UPDATED STRUCTURE */}
+        {/* TREE VIEW - UPDATED WITH MAINTAIN COLUMN */}
         <Card className={`lg:col-span-8 shadow-xl ${isDisplayMode ? 'bg-slate-900 border-slate-800' : ''}`}>
           <CardHeader className={`border-b flex flex-row items-center justify-between ${isDisplayMode ? 'border-slate-800' : 'bg-slate-50/50'}`}>
-            <CardTitle className={isDisplayMode ? 'text-white font-black uppercase tracking-widest' : 'font-black'}>Activity Hierarchy</CardTitle>
-            
-            {/* NEW: Table-style Header Labels */}
+            <CardTitle className={isDisplayMode ? 'text-white font-black uppercase tracking-widest' : 'font-black'}>Hierarchy Analysis</CardTitle>
             <div className="hidden sm:flex gap-8 text-[10px] font-black text-slate-400 uppercase tracking-widest mr-4">
                <div className="w-12 text-center">Total</div>
-               <div className="w-12 text-center text-green-600">Running</div>
+               <div className="w-12 text-center text-green-600">Run</div>
                <div className="w-12 text-center text-red-600">Idle</div>
+               <div className="w-12 text-center text-amber-600">Mtn</div>
                <div className="w-12 text-center text-blue-600">%</div>
             </div>
           </CardHeader>
@@ -284,18 +274,16 @@ export function Dashboard() {
 
               return (
                 <div key={sec.id} className={`border-b ${isDisplayMode ? 'border-slate-800' : ''}`}>
-                  {/* SECTION ROW */}
                   <div className={`p-4 flex items-center justify-between cursor-pointer transition-all ${isDisplayMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`} onClick={() => toggleSection(sec.id)}>
                     <div className="flex items-center gap-4">
                       {isExpanded ? <ChevronDown className="text-blue-500" /> : <ChevronRight className="text-slate-500" />}
                       <span className={`font-black uppercase tracking-tight ${isDisplayMode ? 'text-xl text-white' : 'text-lg text-slate-900'}`}>{sec.name}</span>
                     </div>
-                    
-                    {/* Section Values aligned with header */}
                     <div className="flex gap-8 text-[11px] font-black mr-4 tabular-nums">
                       <div className="w-12 text-center text-slate-500">{secStats.total}</div>
                       <div className="w-12 text-center text-green-500">{secStats.running}</div>
                       <div className="w-12 text-center text-red-500">{secStats.idle}</div>
+                      <div className="w-12 text-center text-amber-500">{secStats.maintain}</div>
                       <div className="w-12 text-center text-blue-500">{secStats.utilization}%</div>
                     </div>
                   </div>
@@ -309,18 +297,16 @@ export function Dashboard() {
 
                         return (
                           <div key={type.id} className={`border-t pl-8 ${isDisplayMode ? 'border-slate-800' : ''}`}>
-                            {/* TYPE ROW */}
                             <div className={`p-3 flex items-center justify-between cursor-pointer ${isDisplayMode ? 'hover:bg-slate-800' : 'hover:bg-blue-50'}`} onClick={() => toggleType(type.id)}>
                               <div className="flex items-center gap-3">
                                 {isTypeExpanded ? <ChevronDown size={14} className="text-blue-400" /> : <ChevronRight size={14} className="text-slate-400" />}
                                 <span className={`text-xs font-black uppercase tracking-widest ${isDisplayMode ? 'text-slate-300' : 'text-slate-500'}`}>{type.name}</span>
                               </div>
-                              
-                              {/* Type Values aligned with header */}
                               <div className="flex gap-8 text-[10px] font-bold mr-4 opacity-80 tabular-nums">
                                 <div className="w-12 text-center text-slate-500">{typeStats.total}</div>
                                 <div className="w-12 text-center text-green-500">{typeStats.running}</div>
                                 <div className="w-12 text-center text-red-500">{typeStats.idle}</div>
+                                <div className="w-12 text-center text-amber-500">{typeStats.maintain}</div>
                                 <div className="w-12 text-center text-blue-500">{typeStats.utilization}%</div>
                               </div>
                             </div>
@@ -332,11 +318,15 @@ export function Dashboard() {
                                     {typeMachines.map((m) => (
                                       <TableRow key={m.id} className={`h-10 border-none ${isDisplayMode ? 'hover:bg-slate-800' : ''}`}>
                                         <TableCell className="font-mono text-[12px] font-black text-blue-500">{m.id}</TableCell>
-                                        <TableCell className={`text-[10px] uppercase font-black ${m.status === 'RUNNING' ? 'text-green-500' : 'text-red-500'}`}>{m.status}</TableCell>
+                                        <TableCell className={`text-[10px] uppercase font-black ${
+                                          (m as any).operationalStatus === 'BREAKDOWN' || (m as any).operationalStatus === 'REMOVED' ? 'text-amber-500' :
+                                          m.status === 'RUNNING' ? 'text-green-500' : 'text-red-500'
+                                        }`}>
+                                          {(m as any).operationalStatus === 'BREAKDOWN' || (m as any).operationalStatus === 'REMOVED' ? 'MAINTAIN' : m.status}
+                                        </TableCell>
                                         <TableCell className="flex gap-2 justify-end items-center h-full pt-1">
                                           {[1, 2, 3].map(i => {
                                             const scan = (m as any).displayScans?.[`scan${i}`];
-                                            if (scanFilter !== 'ALL' && scanFilter !== `scan${i}`) return null;
                                             return (
                                               <div key={i} className={`w-10 h-6 rounded flex items-center justify-center text-[9px] font-black border ${
                                                 scan?.status === 'RUNNING' ? 'bg-green-500 text-white border-green-400' : 

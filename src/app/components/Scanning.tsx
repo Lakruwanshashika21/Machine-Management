@@ -37,14 +37,14 @@ export function Scanning() {
   }, []);
 
   // UNIVERSAL FUZZY SEARCH: Finds Aurora-001 even if you just type "Aurora 1"
- const handleIdSubmission = async (input: string) => {
+ // Inside Scanning.tsx
+
+const handleIdSubmission = async (input: string) => {
   const term = input.trim().toUpperCase();
   if (!term) return;
 
-  // 1. TRY EXACT MATCH FIRST (Prevents Aurora matching Glove)
+  // 1. Find the machine (using your existing fuzzy search logic)
   let machine = machines.find(m => m.id.toUpperCase() === term);
-
-  // 2. IF NO EXACT MATCH, USE SMART SEARCH
   if (!machine) {
     const cleanSearch = term.replace(/[\s-]/g, '');
     machine = machines.find((m: any) => {
@@ -55,16 +55,34 @@ export function Scanning() {
   }
   
   if (machine) {
-    // CRITICAL: Always use the ID directly from the found machine object
-    const finalId = machine.id; 
+    const finalId = machine.id;
+    const health = (machine as any).operationalStatus || 'WORKING';
+    const isPhysicallyDown = health === 'BREAKDOWN' || health === 'REMOVED';
 
+    // UPDATED LOGIC:
+    // If machine is BREAKDOWN, we NEVER auto-run, even if the switch is ON.
+    if (isPhysicallyDown) {
+      if (isAutoRunMode) {
+        toast.warning(`Auto-Run Bypassed: Machine ${finalId} is in ${health} state.`, {
+          description: "Please update health status in the Maintenance tab.",
+          duration: 4000
+        });
+      }
+      // Force open the dialog so they can fix the health status
+      setGlobalScanId(finalId);
+      if (showCamera) stopCamera();
+      setManualInput('');
+      return;
+    }
+
+    // Normal behavior for WORKING machines
     if (isAutoRunMode) {
       await updateMachineStatus(finalId, 'RUNNING', 'status');
       toast.success(`${machine.name || finalId} set to RUNNING`);
       setManualInput('');
       if (showCamera) stopCamera();
     } else {
-      setGlobalScanId(finalId); // This ensures the Dialog opens with the CORRECT ID
+      setGlobalScanId(finalId);
       if (showCamera) stopCamera();
       setManualInput('');
     }
