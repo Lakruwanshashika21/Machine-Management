@@ -14,3 +14,9 @@ dist/
 build/
 
 .firebase/
+
+# Security
+Upolad data/serviceAccountKey.json
+
+# Data files
+Upolad data/*.csv
