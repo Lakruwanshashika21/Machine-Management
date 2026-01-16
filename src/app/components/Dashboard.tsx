@@ -151,27 +151,28 @@ export function Dashboard() {
   };
 
   const downloadExcel = () => {
-    const detailedData = filteredMachines.map(m => ({
-      'Machine ID': m.id,
-      'Section': sections.find(s => s.id === m.section)?.name || m.section,
-      'Status': (m as any).operationalStatus || 'WORKING',
-      'Activity': m.status,
-      'Maintain': (m as any).operationalStatus === 'BREAKDOWN' || (m as any).operationalStatus === 'REMOVED' ? 'Yes' : 'No',
-      'Age (Years)': calculateAge(m.purchaseDate),
-      'Utilization %': m.status === 'RUNNING' ? '100%' : '0%',
-    }));
+  const detailedData = filteredMachines.map(m => ({
+    'Machine ID': m.id,
+    'Section': sections.find(s => s.id === m.section)?.name || m.section,
+    'Status': (m as any).operationalStatus || 'WORKING',
+    'Ownership': (m as any).ownership || 'OWNED', // ADDED
+    'Rented Date': (m as any).rentedDate || 'N/A', // ADDED
+    'Activity': m.status,
+    'Location': (m as any).location || 'N/A',
+    'Age (Years)': calculateAge(m.purchaseDate),
+  }));
 
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet([]);
-    XLSX.utils.sheet_add_aoa(ws, [
-      ["Eskimo Fashions (Pvt) Ltd - Machine Inventory"],
-      [`Date: ${selectedDate}`],
-      []
-    ], { origin: "A1" });
-    XLSX.utils.sheet_add_json(ws, detailedData, { origin: "A4", skipHeader: false });
-    XLSX.utils.book_append_sheet(wb, ws, "Inventory Report");
-    XLSX.writeFile(wb, `Machine_Inventory_Report_${selectedDate}.xlsx`);
-  };
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet([]);
+  XLSX.utils.sheet_add_aoa(ws, [
+    ["Eskimo Fashions (Pvt) Ltd - Machine Inventory"],
+    [`Date: ${selectedDate}`],
+    []
+  ], { origin: "A1" });
+  XLSX.utils.sheet_add_json(ws, detailedData, { origin: "A4", skipHeader: false });
+  XLSX.utils.book_append_sheet(wb, ws, "Inventory Report");
+  XLSX.writeFile(wb, `Machine_Inventory_Report_${selectedDate}.xlsx`);
+};
 
   const containerClass = isDisplayMode 
     ? "fixed inset-0 z-[100] bg-slate-950 p-10 overflow-y-auto text-white flex flex-col"

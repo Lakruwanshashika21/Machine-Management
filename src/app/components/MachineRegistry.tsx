@@ -7,7 +7,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import { Plus, Trash2, Settings2, Printer, Loader2, Layers, MapPin, FileSpreadsheet, Activity, Wrench } from 'lucide-react';
+import { Plus, Trash2, Settings2, Printer, Loader2, Layers, MapPin, FileSpreadsheet, Activity, Wrench, CalendarClock } from 'lucide-react';
 import Barcode from 'react-barcode';
 import { Machine } from '../types';
 import { jsPDF } from 'jspdf';
@@ -15,7 +15,6 @@ import * as XLSX from 'xlsx';
 
 const NEEDLE_TYPES = ["DBx1", "DPx5", "DCx27", "TVx7", "UY128GAS", "TQx1"];
 
-// NEW: Operational Status Constants for physical health management
 const OPERATIONAL_STATUS_OPTIONS = [
   { id: 'WORKING', label: 'Working', color: 'bg-green-500' },
   { id: 'HALF_WORKING', label: 'Half Working', color: 'bg-amber-500' },
@@ -31,6 +30,7 @@ export function MachineRegistry() {
   
   // Filtering State
   const [selectedSectionFilter, setSelectedSectionFilter] = useState('ALL');
+  const [selectedLocationFilter, setSelectedLocationFilter] = useState('ALL');
 
   // Form States
   const [section, setSection] = useState('');
@@ -48,30 +48,33 @@ export function MachineRegistry() {
   const [companyId, setCompanyId] = useState('');
   const [barcodeValue, setBarcodeValue] = useState('');
   const [machineValue, setMachineValue] = useState('');
-  
-  // NEW: Operational Status State for the registration form
   const [operationalStatus, setOperationalStatus] = useState('WORKING');
+  const [ownership, setOwnership] = useState<'OWNED' | 'RENT'>('OWNED');
+  const [rentedDate, setRentedDate] = useState('');
 
+  // Config Modal States
   const [newSectionName, setNewSectionName] = useState('');
   const [newTypeName, setNewTypeName] = useState('');
   const [targetSectionForType, setTargetSectionForType] = useState('');
 
-  // Computed Values for filtering the table view
+  // Dual Filtering Logic
   const filteredTableMachines = useMemo(() => {
-    if (selectedSectionFilter === 'ALL') return machines;
-    return machines.filter(m => m.section === selectedSectionFilter);
-  }, [machines, selectedSectionFilter]);
+    return machines.filter(m => {
+      const matchesSection = selectedSectionFilter === 'ALL' || m.section === selectedSectionFilter;
+      const matchesLocation = selectedLocationFilter === 'ALL' || (m as any).location === selectedLocationFilter;
+      return matchesSection && matchesLocation;
+    });
+  }, [machines, selectedSectionFilter, selectedLocationFilter]);
 
   const availableTypesForSelectedSection = useMemo(() => machineTypes.filter(t => t.sectionId === section), [section, machineTypes]);
   const needsNeedleInfo = useMemo(() => type.toUpperCase().includes('SEWING') || type.toUpperCase().includes('SNLS'), [type]);
 
-  // --- UPDATED: EXCEL EXPORT LOGIC ---
   const downloadInventoryExcel = () => {
     const dataToExport = filteredTableMachines.map(m => ({
       'Machine ID': m.id,
-      // CORRECTED: Operational Status is the physical health
       'Operational Status': (m as any).operationalStatus || 'WORKING', 
-      // CORRECTED: Current Activity is only RUNNING or IDLE
+      'Ownership': (m as any).ownership || 'OWNED',
+      'Rented Date': (m as any).rentedDate || 'N/A',
       'Current Activity': m.status || 'IDLE',
       'Location': (m as any).location || 'N/A',
       'Company ID': (m as any).companyId || 'N/A',
@@ -92,23 +95,14 @@ export function MachineRegistry() {
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet([]);
-
-    XLSX.utils.sheet_add_aoa(ws, [
-      ["Eskimo Fashions (Pvt) Ltd machine inventory report"],
-      [`Export Date: ${new Date().toLocaleDateString()}`],
-      [`Filter: ${selectedSectionFilter === 'ALL' ? 'All Sections' : sections.find(s => s.id === selectedSectionFilter)?.name}`],
-      [] 
-    ], { origin: "A1" });
-
+    XLSX.utils.sheet_add_aoa(ws, [["Eskimo Fashions (Pvt) Ltd machine inventory report"], [`Export Date: ${new Date().toLocaleDateString()}`], [`Filters - Section: ${selectedSectionFilter} | Location: ${selectedLocationFilter}`], []], { origin: "A1" });
     XLSX.utils.sheet_add_json(ws, dataToExport, { origin: "A5", skipHeader: false });
     const wscols = Array(18).fill({ wch: 22 });
     ws['!cols'] = wscols;
-
     XLSX.utils.book_append_sheet(wb, ws, "Inventory");
-    XLSX.writeFile(wb, `Eskimo_Inventory_${selectedSectionFilter}.xlsx`);
+    XLSX.writeFile(wb, `Machine_Registry_Export_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
-  // --- ROBUST CANVAS FETCH LOGIC ---
   const fetchActiveCanvas = async (id: string): Promise<string | null> => {
     const container = document.getElementById(`barcode-render-${id}`);
     if (!container) return null;
@@ -127,17 +121,14 @@ export function MachineRegistry() {
     setIsGenerating(true);
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [50, 30] });
     const sectionObj = sections.find(s => s.id === sectionId);
-
     let pageCount = 0;
     for (const machine of sectionMachines) {
       const imgData = await fetchActiveCanvas(machine.id);
       if (imgData) {
         if (pageCount > 0) doc.addPage([50, 30], 'landscape');
         doc.addImage(imgData, 'PNG', 5, 2, 40, 15);
-        doc.setFontSize(10);
-        doc.text(machine.id, 25, 22, { align: 'center' });
-        doc.setFontSize(7);
-        doc.text(`${sectionObj?.name || 'Sec'} | ${machine.type}`, 25, 26, { align: 'center' });
+        doc.setFontSize(10); doc.text(machine.id, 25, 22, { align: 'center' });
+        doc.setFontSize(7); doc.text(`${sectionObj?.name || 'Sec'} | ${machine.type}`, 25, 26, { align: 'center' });
         pageCount++;
       }
     }
@@ -151,8 +142,7 @@ export function MachineRegistry() {
     if (imgData) {
       const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [50, 30] });
       doc.addImage(imgData, 'PNG', 5, 2, 40, 15);
-      doc.setFontSize(10);
-      doc.text(machine.id, 25, 22, { align: 'center' });
+      doc.setFontSize(10); doc.text(machine.id, 25, 22, { align: 'center' });
       doc.setFontSize(7);
       const sectionName = sections.find(s => s.id === machine.section)?.name || machine.section;
       doc.text(`${sectionName} | ${machine.type}`, 25, 26, { align: 'center' });
@@ -165,26 +155,23 @@ export function MachineRegistry() {
     e.preventDefault();
     await addMachine({ 
       section, type, brand, purchaseDate, serialNo, faNumber, modelNo, dept, name, 
-      status: 'IDLE', // Default Production Activity
-      operationalStatus, // Initial Physical Health
-      location, companyId, barcodeValue, machineValue,
+      status: 'IDLE', operationalStatus, location, companyId, barcodeValue, machineValue,
+      ownership, rentedDate: ownership === 'RENT' ? rentedDate : '',
       needleSize: needsNeedleInfo ? needleSize : 'N/A',
       needleType: needsNeedleInfo ? needleType : 'N/A'
     });
-    // Reset Form
     setSection(''); setType(''); setBrand(''); setPurchaseDate(''); setSerialNo(''); 
     setFaNumber(''); setModelNo(''); setDept(''); setName(''); setNeedleSize(''); 
     setNeedleType(''); setLocation(''); setCompanyId(''); setBarcodeValue(''); setMachineValue('');
-    setOperationalStatus('WORKING');
+    setOperationalStatus('WORKING'); setOwnership('OWNED'); setRentedDate('');
     setShowAddForm(false);
   };
 
   return (
     <div className="p-4 space-y-6">
-      {/* HIDDEN RENDER PORTAL */}
-      <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', opacity: 0, zIndex: -1, overflow: 'auto' }}>
+      <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', opacity: 0, zIndex: -1 }}>
         {machines.map(m => (
-          <div key={`render-${m.id}-${m.lastUpdated || 'v1'}`} id={`barcode-render-${m.id}`} style={{ padding: '20px' }}>
+          <div key={`render-${m.id}`} id={`barcode-render-${m.id}`} style={{ padding: '20px' }}>
             <Barcode value={m.id.replace(/\s/g, '')} renderer="canvas" width={2} height={60} displayValue={false} />
           </div>
         ))}
@@ -193,15 +180,16 @@ export function MachineRegistry() {
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-black text-slate-900 tracking-tight">Machine Registry</h1>
-          <p className="text-slate-500 font-medium tracking-tighter">Physical Asset & Health Management</p>
+          <p className="text-slate-500 font-medium tracking-tighter">Asset & Health Management</p>
         </div>
         
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border mr-2">
+          {/* Section Filter */}
+          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border">
             <Layers className="w-4 h-4 ml-2 text-slate-400" />
             <Select value={selectedSectionFilter} onValueChange={setSelectedSectionFilter}>
-              <SelectTrigger className="w-40 border-none bg-transparent shadow-none font-bold text-xs uppercase">
-                <SelectValue placeholder="All Sections" />
+              <SelectTrigger className="w-32 border-none bg-transparent shadow-none font-bold text-[10px] uppercase">
+                <SelectValue placeholder="Section" />
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="ALL">All Sections</SelectItem>
@@ -210,25 +198,33 @@ export function MachineRegistry() {
             </Select>
           </div>
 
-          <Button variant="outline" className="bg-green-50 text-green-700 border-green-200 hover:bg-green-100" onClick={downloadInventoryExcel}>
-            <FileSpreadsheet className="w-4 h-4 mr-2" /> Export Excel
-          </Button>
-
-          {isGenerating ? (
-             <Button disabled className="bg-slate-800"><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Rendering...</Button>
-          ) : (
-            <Select onValueChange={downloadSectionBarcodes}>
-              <SelectTrigger className="w-40 font-bold uppercase text-xs border-blue-200"><SelectValue placeholder="Print Barcodes" /></SelectTrigger>
-              <SelectContent>{sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
+          {/* Location Filter */}
+          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border">
+            <MapPin className="w-4 h-4 ml-2 text-slate-400" />
+            <Select value={selectedLocationFilter} onValueChange={setSelectedLocationFilter}>
+              <SelectTrigger className="w-32 border-none bg-transparent shadow-none font-bold text-[10px] uppercase">
+                <SelectValue placeholder="Location" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="ALL">All Locations</SelectItem>
+                <SelectItem value="Bungalow">Bungalow</SelectItem>
+                <SelectItem value="Negombo">Negombo</SelectItem>
+                <SelectItem value="Pallekale">Pallekale</SelectItem>
+                <SelectItem value="Punani">Punani</SelectItem>
+              </SelectContent>
             </Select>
-          )}
+          </div>
+
+          <Button variant="outline" className="bg-green-50 text-green-700 border-green-200" onClick={downloadInventoryExcel}>
+            <FileSpreadsheet className="w-4 h-4 mr-2" /> Export
+          </Button>
           
           <Button variant="outline" onClick={() => setShowManageConfig(true)}><Settings2 className="w-4 h-4 mr-2" /> Config</Button>
-          <Button onClick={() => setShowAddForm(true)} className="bg-blue-600 hover:bg-blue-700 font-bold"><Plus className="w-4 h-4 mr-2" /> Add Machine</Button>
+          <Button onClick={() => setShowAddForm(true)} className="bg-blue-600 font-bold"><Plus className="w-4 h-4 mr-2" /> Add Machine</Button>
         </div>
       </div>
 
-      <Card className="shadow-md border-slate-200 overflow-hidden">
+      <Card className="shadow-md overflow-hidden">
         <CardContent className="p-0">
           <Table>
             <TableHeader className="bg-slate-50">
@@ -236,16 +232,14 @@ export function MachineRegistry() {
                 <TableHead className="font-bold text-[11px] uppercase">ID / Health</TableHead>
                 <TableHead className="font-bold text-[11px] uppercase">Machine Details</TableHead>
                 <TableHead className="font-bold text-[11px] uppercase">Section</TableHead>
-                <TableHead className="font-bold text-[11px] uppercase">Activity</TableHead>
-                <TableHead className="text-right font-bold pr-6">Actions</TableHead>
+                <TableHead className="font-bold text-[11px] uppercase text-right pr-6">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredTableMachines.map((machine) => (
-                <TableRow key={machine.id} className="hover:bg-slate-50/50">
+                <TableRow key={machine.id}>
                   <TableCell>
-                    <div className="font-mono font-bold text-blue-700 uppercase text-xs">{machine.id}</div>
-                    {/* NEW: Operational Status Badge (Physical Health) */}
+                    <div className="font-mono font-bold text-blue-700 text-xs">{machine.id}</div>
                     <div className={`mt-1 px-2 py-0.5 rounded text-[8px] font-black text-white w-fit uppercase ${
                       OPERATIONAL_STATUS_OPTIONS.find(o => o.id === (machine as any).operationalStatus)?.color || 'bg-green-500'
                     }`}>
@@ -254,24 +248,16 @@ export function MachineRegistry() {
                   </TableCell>
                   <TableCell>
                     <div className="font-bold uppercase text-xs">{machine.name}</div>
-                    <div className="text-[10px] text-slate-500">{(machine as any).brand} | {machine.modelNo}</div>
-                    <div className="text-[10px] text-blue-600 font-semibold flex items-center gap-1"><MapPin size={10} /> {(machine as any).location}</div>
+                    <div className="text-[10px] text-slate-500">{(machine as any).location} | <span className="font-bold">{(machine as any).ownership || 'OWNED'}</span></div>
                   </TableCell>
                   <TableCell>
-                    <div className="text-xs font-bold text-slate-600">{sections.find(s => s.id === machine.section)?.name || machine.section}</div>
-                    <div className="text-[10px] text-slate-400 font-medium">{machine.type}</div>
-                  </TableCell>
-                  <TableCell>
-                     {/* Production Activity (Running/Idle) */}
-                     <div className={`text-[10px] font-black uppercase ${machine.status === 'RUNNING' ? 'text-green-600' : 'text-red-500'}`}>
-                       {machine.status || 'IDLE'}
-                     </div>
-                     <div className="text-[10px] text-slate-400 font-mono">SN: {(machine as any).serialNo}</div>
+                    <div className="text-xs font-bold">{sections.find(s => s.id === machine.section)?.name || machine.section}</div>
+                    <div className="text-[10px] text-slate-400">{machine.type}</div>
                   </TableCell>
                   <TableCell className="text-right pr-6">
                     <div className="flex justify-end gap-1">
-                        <Button variant="outline" size="sm" onClick={() => generateSingleBarcodePDF(machine)}><Printer className="w-4 h-4" /></Button>
-                        <Button variant="ghost" size="sm" onClick={() => deleteMachine(machine.id)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
+                      <Button variant="outline" size="sm" onClick={() => generateSingleBarcodePDF(machine)}><Printer className="w-4 h-4" /></Button>
+                      <Button variant="ghost" size="sm" onClick={() => deleteMachine(machine.id)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
                     </div>
                   </TableCell>
                 </TableRow>
@@ -279,38 +265,32 @@ export function MachineRegistry() {
             </TableBody>
           </Table>
           {filteredTableMachines.length === 0 && (
-            <div className="p-8 text-center text-slate-400 font-medium italic">No machines found for the selected section filter.</div>
+            <div className="p-8 text-center text-slate-400 italic">No machines found for current filters.</div>
           )}
         </CardContent>
       </Card>
 
+      {/* ADD MACHINE DIALOG */}
       <Dialog open={showAddForm} onOpenChange={setShowAddForm}>
         <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold uppercase tracking-tighter">Register Factory Asset</DialogTitle>
-            <DialogDescription className="hidden">Form to register a new machine asset</DialogDescription>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Register Factory Asset</DialogTitle></DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4 pt-4">
-            {/* NEW: Health Status Selector at Top of Form */}
+            
+            {/* Health Status */}
             <div className="space-y-2 bg-blue-50/50 p-4 rounded-2xl border border-blue-100">
-              <Label className="text-[10px] font-black uppercase text-blue-600 flex items-center gap-2">
-                <Wrench size={14} /> Initial Machine Operational Health
-              </Label>
+              <Label className="text-[10px] font-black uppercase text-blue-600 flex items-center gap-2"><Wrench size={14} /> Health Status</Label>
               <Select value={operationalStatus} onValueChange={setOperationalStatus}>
-                <SelectTrigger className="bg-white">
-                  <SelectValue placeholder="Select Health Status" />
-                </SelectTrigger>
+                <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {OPERATIONAL_STATUS_OPTIONS.map(opt => (
-                    <SelectItem key={opt.id} value={opt.id}>{opt.label}</SelectItem>
-                  ))}
+                  {OPERATIONAL_STATUS_OPTIONS.map(opt => <SelectItem key={opt.id} value={opt.id}>{opt.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
 
+            {/* Location and Company */}
             <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border">
               <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-blue-600">Location</Label>
+                <Label className="text-[10px] font-black uppercase text-blue-600 flex items-center gap-2"><MapPin size={12}/> Location</Label>
                 <Select value={location} onValueChange={setLocation}>
                   <SelectTrigger className="bg-white"><SelectValue placeholder="Select Location" /></SelectTrigger>
                   <SelectContent>
@@ -323,31 +303,53 @@ export function MachineRegistry() {
               </div>
               <div className="space-y-2">
                 <Label className="text-[10px] font-black uppercase text-blue-600">Company ID</Label>
-                <Input placeholder="Enter Company ID" value={companyId} onChange={e => setCompanyId(e.target.value)} />
+                <Input placeholder="Enter ID" value={companyId} onChange={e => setCompanyId(e.target.value)} />
               </div>
             </div>
-            
+
+            {/* Ownership Selection */}
+            <div className="grid grid-cols-2 gap-4 p-4 bg-orange-50/50 rounded-2xl border border-orange-100">
+              <div className="space-y-2">
+                <Label className="text-[10px] font-black uppercase text-orange-600">Ownership Type</Label>
+                <Select value={ownership} onValueChange={(val: any) => setOwnership(val)}>
+                  <SelectTrigger className="bg-white"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="OWNED">Company Owned</SelectItem>
+                    <SelectItem value="RENT">Rent</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {ownership === 'RENT' && (
+                <div className="space-y-2 animate-in fade-in slide-in-from-left-1">
+                  <Label className="text-[10px] font-black uppercase text-orange-600 flex items-center gap-2"><CalendarClock size={12}/> Rented Date</Label>
+                  <Input type="date" value={rentedDate} onChange={e => setRentedDate(e.target.value)} required />
+                </div>
+              )}
+            </div>
+
+            {/* Barcode and Value */}
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-slate-400">Barcode Value</Label>
-                <Input placeholder="Scan/Enter Barcode" value={barcodeValue} onChange={e => setBarcodeValue(e.target.value)} />
+                <Label className="text-[10px] uppercase font-black text-slate-400">Barcode Value</Label>
+                <Input placeholder="Scan/Enter" value={barcodeValue} onChange={e => setBarcodeValue(e.target.value)} />
               </div>
               <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-slate-400">Machine Value</Label>
+                <Label className="text-[10px] uppercase font-black text-slate-400">Machine Value</Label>
                 <Input placeholder="Asset Value" value={machineValue} onChange={e => setMachineValue(e.target.value)} />
               </div>
             </div>
 
+            {/* Section and Type */}
             <div className="grid grid-cols-2 gap-4 border-t pt-4">
               <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-slate-400">Section</Label>
+                <Label className="text-[10px] uppercase font-black">Section</Label>
                 <Select value={section} onValueChange={(val) => { setSection(val); setType(''); }}>
                   <SelectTrigger><SelectValue placeholder="Select" /></SelectTrigger>
                   <SelectContent>{sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label className="text-[10px] font-black uppercase text-slate-400">Machine Type</Label>
+                <Label className="text-[10px] uppercase font-black">Machine Type</Label>
                 <Select value={type} onValueChange={setType} disabled={!section}>
                   <SelectTrigger><SelectValue placeholder="Select Type" /></SelectTrigger>
                   <SelectContent>{availableTypesForSelectedSection.map(t => <SelectItem key={t.id} value={t.name}>{t.name}</SelectItem>)}</SelectContent>
@@ -355,8 +357,9 @@ export function MachineRegistry() {
               </div>
             </div>
 
+            {/* Name, Brand, Serial, FA */}
             <div className="grid grid-cols-2 gap-4">
-              <Input placeholder="Machine Name" value={name} onChange={e => setName(e.target.value)} required />
+              <Input placeholder="Name" value={name} onChange={e => setName(e.target.value)} required />
               <Input placeholder="Brand" value={brand} onChange={e => setBrand(e.target.value)} required />
             </div>
             <div className="grid grid-cols-2 gap-4">
@@ -365,14 +368,15 @@ export function MachineRegistry() {
             </div>
             <div className="grid grid-cols-2 gap-4">
               <Input type="date" value={purchaseDate} onChange={e => setPurchaseDate(e.target.value)} required />
-              <Input placeholder="Model Number" value={modelNo} onChange={e => setModelNo(e.target.value)} required />
+              <Input placeholder="Model No" value={modelNo} onChange={e => setModelNo(e.target.value)} required />
             </div>
 
+            {/* Needle Info (Conditional) */}
             {needsNeedleInfo && (
               <div className="grid grid-cols-2 gap-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black text-blue-600 uppercase">Needle Size</Label>
-                  <Input placeholder="e.g. 14/90" value={needleSize} onChange={e => setNeedleSize(e.target.value)} required />
+                  <Input placeholder="14/90" value={needleSize} onChange={e => setNeedleSize(e.target.value)} required />
                 </div>
                 <div className="space-y-2">
                   <Label className="text-[10px] font-black text-blue-600 uppercase">Needle Type</Label>
@@ -384,11 +388,12 @@ export function MachineRegistry() {
               </div>
             )}
             <Input placeholder="Department" value={dept} onChange={e => setDept(e.target.value)} required />
-            <Button type="submit" className="w-full bg-blue-600 h-14 text-lg font-black uppercase" disabled={!type}>Complete Registration</Button>
+            <Button type="submit" className="w-full bg-blue-600 h-14 font-black uppercase">Complete Registration</Button>
           </form>
         </DialogContent>
       </Dialog>
 
+      {/* CONFIGURATION DIALOG */}
       <Dialog open={showManageConfig} onOpenChange={setShowManageConfig}>
         <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Structure Configuration</DialogTitle></DialogHeader>
@@ -397,7 +402,7 @@ export function MachineRegistry() {
               <h3 className="text-sm font-bold border-b pb-2">Sections</h3>
               <div className="flex gap-2">
                 <Input placeholder="e.g. A" value={newSectionName} onChange={e => setNewSectionName(e.target.value)} />
-                <Button size="sm" onClick={() => { addSection(newSectionName); setNewSectionName(''); }}>Add</Button>
+                <Button size="sm" onClick={() => { if(newSectionName) { addSection(newSectionName); setNewSectionName(''); }}}>Add</Button>
               </div>
               <div className="space-y-1">
                 {sections.map(s => (
@@ -416,7 +421,7 @@ export function MachineRegistry() {
               </Select>
               <div className="flex gap-2">
                 <Input placeholder="e.g. CNC" value={newTypeName} onChange={e => setNewTypeName(e.target.value)} />
-                <Button size="sm" onClick={() => { addMachineType(newTypeName, targetSectionForType); setNewTypeName(''); }}>Add</Button>
+                <Button size="sm" onClick={() => { if(newTypeName && targetSectionForType) { addMachineType(newTypeName, targetSectionForType); setNewTypeName(''); }}}>Add</Button>
               </div>
               <div className="space-y-1">
                 {machineTypes.filter(t => t.sectionId === targetSectionForType).map(t => (
