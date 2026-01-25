@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "set NODE_OPTIONS=--max-old-space-size=4096 && vite",
-    "build": "vite build", 
+    "build": "vite build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -44,9 +44,11 @@
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
+    "csv-parser": "^3.2.0",
     "date-fns": "3.6.0",
     "embla-carousel-react": "8.6.0",
     "firebase": "^12.7.0",
+    "firebase-admin": "^13.6.0",
     "html5-qrcode": "^2.3.8",
     "input-otp": "1.4.2",
     "jspdf": "^4.0.0",

@@ -9,7 +9,6 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-// CONFIG: Set this to your current CSV file name
 const CSV_FILE = 'Book1_Sheet3.csv'; 
 
 const clean = (val) => {
@@ -17,10 +16,6 @@ const clean = (val) => {
   return String(val).trim();
 };
 
-/**
- * STRICT STATUS MAPPING
- * "P/Breakdown" is mapped to "REMOVED"
- */
 const mapHealth = (status) => {
   const s = clean(status).toUpperCase();
   if (s.includes('P/BREAKDOWN') || s.includes('REMOVED')) return 'REMOVED';
@@ -29,11 +24,16 @@ const mapHealth = (status) => {
   return 'WORKING'; 
 };
 
-async function startUpload() {
-  // REMOVED: clearMachines() call is gone to keep your database data safe.
+// NEW: Helper to determine ownership from CSV
+const mapOwnership = (val) => {
+  const s = clean(val).toUpperCase();
+  if (s.includes('RENT') || s.includes('HIRE')) return 'RENT';
+  return 'OWNED';
+};
 
+async function startUpload() {
   const results = [];
-  console.log(`🚀 Starting update from ${CSV_FILE} (Existing data will be kept)...`);
+  console.log(`🚀 Starting update from ${CSV_FILE}...`);
 
   fs.createReadStream(CSV_FILE)
     .pipe(csv())
@@ -55,19 +55,23 @@ async function startUpload() {
             ? `${section}-${rawType.toUpperCase().replace(/\s+/g, '')}-${serial}` 
             : `${section}-TEMP-${Math.random().toString(36).substr(2, 5)}`;
 
+          // NEW: Check if the row is a Koeper or FTK to ensure correct naming
+          const machineType = rawType.toUpperCase().includes('KUPER') ? 'Koeper' : rawType;
+
           const machineData = {
             id: docId,
-            // Uses your renamed Excel headers
             rowNumber: clean(row.rowNumber) || "N/A",
             machineNumber: clean(row.machineNumber) || "N/A",
-            
             operationalStatus: mapHealth(row.operationalStatus || row.Status),
-            // We set status to IDLE for imported rows to ensure a fresh production start
             status: "IDLE", 
+            
+            // NEW FIELDS INTEGRATION
+            ownership: mapOwnership(row.ownership || row.OWNERSHIP),
+            rentedDate: clean(row.rentedDate || row['Rented Date']) || "",
             
             name: clean(row.name || row.DECRIPTION).toLowerCase(),
             brand: clean(row.brand || row.Section).toLowerCase(),
-            type: rawType,
+            type: machineType,
             section: section,
             serialNo: serial,
             barcodeValue: clean(row.barcodeValue || row.Barcode),
@@ -83,7 +87,6 @@ async function startUpload() {
           };
 
           const docRef = db.collection('machines').doc(docId);
-          // VITAL: { merge: true } prevents overwriting scan history or existing fields
           batch.set(docRef, machineData, { merge: true });
         });
 

@@ -7,7 +7,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import { Plus, Trash2, Settings2, Printer, Loader2, Layers, MapPin, FileSpreadsheet, Activity, Wrench, CalendarClock } from 'lucide-react';
+import { Plus, Trash2, Settings2, Printer, Loader2, Layers, MapPin, FileSpreadsheet, Activity,Download, FileText, Wrench, CalendarClock } from 'lucide-react';
 import Barcode from 'react-barcode';
 import { Machine } from '../types';
 import { jsPDF } from 'jspdf';
@@ -56,6 +56,8 @@ export function MachineRegistry() {
   const [newSectionName, setNewSectionName] = useState('');
   const [newTypeName, setNewTypeName] = useState('');
   const [targetSectionForType, setTargetSectionForType] = useState('');
+
+  const [sectionToDownload, setSectionToDownload] = useState('');
 
   // Dual Filtering Logic
   const filteredTableMachines = useMemo(() => {
@@ -178,51 +180,77 @@ export function MachineRegistry() {
       </div>
 
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Machine Registry</h1>
-          <p className="text-slate-500 font-medium tracking-tighter">Asset & Health Management</p>
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Section Filter */}
-          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border">
-            <Layers className="w-4 h-4 ml-2 text-slate-400" />
-            <Select value={selectedSectionFilter} onValueChange={setSelectedSectionFilter}>
-              <SelectTrigger className="w-32 border-none bg-transparent shadow-none font-bold text-[10px] uppercase">
-                <SelectValue placeholder="Section" />
+      <div>
+        <h1 className="text-3xl font-black text-slate-900 tracking-tight">Machine Registry</h1>
+        <p className="text-slate-500 font-medium tracking-tighter">Asset & Health Management</p>
+      </div>
+      
+      <div className="flex flex-wrap items-center gap-2">
+        {/* --- NEW SECTION: SECTION-WISE BARCODE DOWNLOAD CARD --- */}
+        <Card className="flex items-center gap-2 bg-blue-50 p-2 border-blue-200 shadow-sm">
+          <div className="flex items-center gap-2">
+            <Printer className="w-4 h-4 text-blue-600" />
+            <Select value={sectionToDownload} onValueChange={setSectionToDownload}>
+              <SelectTrigger className="w-40 h-8 font-bold text-[10px] uppercase bg-white">
+                <SelectValue placeholder="Select Section" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="ALL">All Sections</SelectItem>
                 {sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
               </SelectContent>
             </Select>
+            <Button 
+              size="sm" 
+              variant="default" 
+              className="h-8 bg-blue-600 text-[10px] font-black"
+              disabled={!sectionToDownload || isGenerating}
+              onClick={() => downloadSectionBarcodes(sectionToDownload)}
+            >
+              {isGenerating ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Download className="w-3 h-3 mr-1" />}
+              DOWNLOAD BARCODES
+            </Button>
           </div>
+        </Card>
+        {/* --- END NEW SECTION --- */}
 
-          {/* Location Filter */}
-          <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border">
-            <MapPin className="w-4 h-4 ml-2 text-slate-400" />
-            <Select value={selectedLocationFilter} onValueChange={setSelectedLocationFilter}>
-              <SelectTrigger className="w-32 border-none bg-transparent shadow-none font-bold text-[10px] uppercase">
-                <SelectValue placeholder="Location" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="ALL">All Locations</SelectItem>
-                <SelectItem value="Bungalow">Bungalow</SelectItem>
-                <SelectItem value="Negombo">Negombo</SelectItem>
-                <SelectItem value="Pallekale">Pallekale</SelectItem>
-                <SelectItem value="Punani">Punani</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-
-          <Button variant="outline" className="bg-green-50 text-green-700 border-green-200" onClick={downloadInventoryExcel}>
-            <FileSpreadsheet className="w-4 h-4 mr-2" /> Export
-          </Button>
-          
-          <Button variant="outline" onClick={() => setShowManageConfig(true)}><Settings2 className="w-4 h-4 mr-2" /> Config</Button>
-          <Button onClick={() => setShowAddForm(true)} className="bg-blue-600 font-bold"><Plus className="w-4 h-4 mr-2" /> Add Machine</Button>
+        {/* Section Filter */}
+        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border">
+          <Layers className="w-4 h-4 ml-2 text-slate-400" />
+          <Select value={selectedSectionFilter} onValueChange={setSelectedSectionFilter}>
+            <SelectTrigger className="w-32 border-none bg-transparent shadow-none font-bold text-[10px] uppercase">
+              <SelectValue placeholder="Section" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Sections</SelectItem>
+              {sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
+
+        {/* Location Filter */}
+        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-lg border">
+          <MapPin className="w-4 h-4 ml-2 text-slate-400" />
+          <Select value={selectedLocationFilter} onValueChange={setSelectedLocationFilter}>
+            <SelectTrigger className="w-32 border-none bg-transparent shadow-none font-bold text-[10px] uppercase">
+              <SelectValue placeholder="Location" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">All Locations</SelectItem>
+              <SelectItem value="Bungalow">Bungalow</SelectItem>
+              <SelectItem value="Negombo">Negombo</SelectItem>
+              <SelectItem value="Pallekale">Pallekale</SelectItem>
+              <SelectItem value="Punani">Punani</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Button variant="outline" className="bg-green-50 text-green-700 border-green-200" onClick={downloadInventoryExcel}>
+          <FileSpreadsheet className="w-4 h-4 mr-2" /> Export
+        </Button>
+        
+        <Button variant="outline" onClick={() => setShowManageConfig(true)}><Settings2 className="w-4 h-4 mr-2" /> Config</Button>
+        <Button onClick={() => setShowAddForm(true)} className="bg-blue-600 font-bold"><Plus className="w-4 h-4 mr-2" /> Add Machine</Button>
       </div>
+    </div>
 
       <Card className="shadow-md overflow-hidden">
         <CardContent className="p-0">
