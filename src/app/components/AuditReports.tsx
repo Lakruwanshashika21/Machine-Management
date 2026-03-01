@@ -114,24 +114,45 @@ export function AuditReports() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredLogs.map((log) => (
-                  <TableRow key={log.id}>
-                    <TableCell className="text-sm">
-                      {new Date(log.timestamp).toLocaleString()}
-                    </TableCell>
-                    <TableCell>{log.userName}</TableCell>
-                    <TableCell className="font-mono">{log.machineId}</TableCell>
-                    <TableCell>
-                      <span className={`px-2 py-1 rounded text-white text-xs ${
+              {filteredLogs.map((log) => (
+                <TableRow key={log.id}>
+                  <TableCell className="text-sm">
+                    {new Date(log.timestamp).toLocaleString()}
+                  </TableCell>
+                  <TableCell>{log.userName}</TableCell>
+                  <TableCell className="font-mono">{log.machineId}</TableCell>
+                  <TableCell>
+                    {/* 1. Check if it's an object and NOT null */}
+                    {typeof log.newStatus === 'object' && log.newStatus !== null ? (
+                      <div className="flex flex-col gap-1">
+                        {/* 2. Determine if it's the Transfer Record or a different object */}
+                        <span className="px-2 py-1 rounded bg-blue-600 text-white text-[10px] font-black uppercase w-fit">
+                          {log.newStatus.type || 'TRANSFER'}
+                        </span>
+                        <span className="text-[10px] text-slate-500 font-bold leading-tight">
+                          {log.newStatus.to ? `TO: ${log.newStatus.to}` : 'LOCATION CHANGE'} 
+                          {log.newStatus.gatepass && ` | GP: ${log.newStatus.gatepass}`}
+                        </span>
+                        {/* 3. Added 'By' info for the report to be more detailed */}
+                        {log.newStatus.byWho && (
+                          <span className="text-[9px] text-slate-400 italic font-medium uppercase">
+                            Auth: {log.newStatus.byWho}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      /* 4. Default String rendering for RUNNING/IDLE scans */
+                      <span className={`px-2 py-1 rounded text-white text-[10px] font-black uppercase shadow-sm ${
                         log.newStatus === 'RUNNING' ? 'bg-green-600' : 
-                        log.newStatus === 'IDLE' ? 'bg-red-500' : 'bg-gray-500'
+                        log.newStatus === 'IDLE' ? 'bg-red-500' : 'bg-slate-500'
                       }`}>
-                        {log.newStatus}
+                        {log.newStatus || 'UNKNOWN'}
                       </span>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
+                    )}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
             </Table>
           </div>
         </CardContent>

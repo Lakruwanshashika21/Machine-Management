@@ -39,11 +39,17 @@ export function Scanning() {
   // UNIVERSAL FUZZY SEARCH: Finds Aurora-001 even if you just type "Aurora 1"
  // Inside Scanning.tsx
 
-const handleIdSubmission = async (input: string) => {
+const handleIdSubmission = async (input: string, e?: React.KeyboardEvent | React.MouseEvent) => {
+  // 1. Stop the Enter key from reaching the Dialog
+  if (e && 'preventDefault' in e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
   const term = input.trim().toUpperCase();
   if (!term) return;
 
-  // 1. Find the machine (using your existing fuzzy search logic)
+  // Find the machine
   let machine = machines.find(m => m.id.toUpperCase() === term);
   if (!machine) {
     const cleanSearch = term.replace(/[\s-]/g, '');
@@ -59,8 +65,7 @@ const handleIdSubmission = async (input: string) => {
     const health = (machine as any).operationalStatus || 'WORKING';
     const isPhysicallyDown = health === 'BREAKDOWN' || health === 'REMOVED';
 
-    // UPDATED LOGIC:
-    // If machine is BREAKDOWN, we NEVER auto-run, even if the switch is ON.
+    // Handle Maintenance Bypass
     if (isPhysicallyDown) {
       if (isAutoRunMode) {
         toast.warning(`Auto-Run Bypassed: Machine ${finalId} is in ${health} state.`, {
@@ -68,23 +73,31 @@ const handleIdSubmission = async (input: string) => {
           duration: 4000
         });
       }
-      // Force open the dialog so they can fix the health status
-      setGlobalScanId(finalId);
-      if (showCamera) stopCamera();
+      
+      // Cleanup UI before opening dialog
       setManualInput('');
+      if (showCamera) stopCamera();
+
+      // Use a timeout so the Dialog doesn't "see" the Enter key press
+      setTimeout(() => {
+        setGlobalScanId(finalId);
+      }, 150);
       return;
     }
 
-    // Normal behavior for WORKING machines
+    // Normal Activity
     if (isAutoRunMode) {
       await updateMachineStatus(finalId, 'RUNNING', 'status');
       toast.success(`${machine.name || finalId} set to RUNNING`);
       setManualInput('');
-      if (showCamera) stopCamera();
     } else {
-      setGlobalScanId(finalId);
-      if (showCamera) stopCamera();
+      // Manual Mode: Open Dialog with a delay
       setManualInput('');
+      if (showCamera) stopCamera();
+      
+      setTimeout(() => {
+        setGlobalScanId(finalId);
+      }, 150);
     }
   } else {
     toast.error(`No machine found matching "${input}"`);
@@ -175,22 +188,27 @@ const handleIdSubmission = async (input: string) => {
             <Input 
               placeholder="Type Machine ID..." 
               value={manualInput} 
-              list="machine-list" // Link to the datalist below
+              list="machine-list" 
               onChange={(e) => setManualInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleIdSubmission(manualInput)}
+              // Pass 'e' to the handler
+              onKeyDown={(e) => e.key === 'Enter' && handleIdSubmission(manualInput, e)}
             />
 
             <datalist id="machine-list">
               {machines.map((m) => (
-                // Use ID as the value to ensure uniqueness
                 <option key={m.id} value={m.id}>
                   {m.name} ({m.section})
                 </option>
               ))}
             </datalist>
-          <Button onClick={() => handleIdSubmission(manualInput)} className="bg-blue-600 h-14 px-6 shadow-md hover:bg-blue-700 transition-colors">
-            <Search size={24} />
-          </Button>
+
+            <Button 
+              // Pass 'e' to the handler
+              onClick={(e) => handleIdSubmission(manualInput, e)} 
+              className="bg-blue-600 h-14 px-6 shadow-md hover:bg-blue-700 transition-colors"
+            >
+              <Search size={24} />
+            </Button>
         </div>
       </Card>
 
