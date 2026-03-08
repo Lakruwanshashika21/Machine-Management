@@ -38,72 +38,81 @@ export function Scanning() {
 
   // UNIVERSAL FUZZY SEARCH: Finds Aurora-001 even if you just type "Aurora 1"
  // Inside Scanning.tsx
+  const isProcessingScan = useRef(false);
 
-const handleIdSubmission = async (input: string, e?: React.KeyboardEvent | React.MouseEvent) => {
-  // 1. Stop the Enter key from reaching the Dialog
-  if (e && 'preventDefault' in e) {
-    e.preventDefault();
-    e.stopPropagation();
-  }
+  const handleIdSubmission = async (input: string, e?: React.KeyboardEvent | React.MouseEvent) => {
+    // 1. Immediately kill the "Enter" event from the scanner so it doesn't bubble up
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
 
-  const term = input.trim().toUpperCase();
-  if (!term) return;
+    // 2. Anti-Bounce Lock: Prevent the high-speed scanner from triggering this twice
+    if (isProcessingScan.current) return;
+    
+    const term = input.trim().toUpperCase();
+    if (!term) return;
 
-  // Find the machine
-  let machine = machines.find(m => m.id.toUpperCase() === term);
-  if (!machine) {
-    const cleanSearch = term.replace(/[\s-]/g, '');
-    machine = machines.find((m: any) => {
-      const cleanDbId = m.id.toUpperCase().replace(/[\s-]/g, '');
-      const cleanDbName = (m.name || '').toUpperCase().replace(/[\s-]/g, '');
-      return cleanDbId.includes(cleanSearch) || cleanDbName.includes(cleanSearch);
-    });
-  }
-  
-  if (machine) {
-    const finalId = machine.id;
-    const health = (machine as any).operationalStatus || 'WORKING';
-    const isPhysicallyDown = health === 'BREAKDOWN' || health === 'REMOVED';
+    isProcessingScan.current = true; // Engage lock
 
-    // Handle Maintenance Bypass
-    if (isPhysicallyDown) {
-      if (isAutoRunMode) {
-        toast.warning(`Auto-Run Bypassed: Machine ${finalId} is in ${health} state.`, {
-          description: "Please update health status in the Maintenance tab.",
-          duration: 4000
+    // Find the machine
+    let machine = machines.find(m => m.id.toUpperCase() === term);
+    
+    // Fuzzy search fallback
+    if (!machine) {
+      const cleanSearch = term.replace(/[\s-]/g, '');
+      machine = machines.find((m: any) => {
+        const cleanDbId = m.id.toUpperCase().replace(/[\s-]/g, '');
+        return cleanDbId.includes(cleanSearch);
+      });
+    }
+    
+    if (machine) {
+      const finalId = machine.id;
+      const health = (machine as any).operationalStatus || 'WORKING';
+      const isPhysicallyDown = health === 'BREAKDOWN' || health === 'REMOVED';
+
+      if (isPhysicallyDown) {
+        toast.warning(`Machine ${finalId} is in ${health} state.`, {
+          description: "Please update health status in the Maintenance tab."
         });
+        setManualInput('');
+        
+        // 3. ENFORCED DELAY: 500ms ensures the Zebra scanner's "Enter" suffix is finished
+        setTimeout(() => {
+          setGlobalScanId(finalId);
+          isProcessingScan.current = false; // Release lock after dialog opens
+        }, 500); 
+        return;
       }
-      
-      // Cleanup UI before opening dialog
-      setManualInput('');
-      if (showCamera) stopCamera();
 
-      // Use a timeout so the Dialog doesn't "see" the Enter key press
-      setTimeout(() => {
-        setGlobalScanId(finalId);
-      }, 150);
-      return;
-    }
-
-    // Normal Activity
-    if (isAutoRunMode) {
-      await updateMachineStatus(finalId, 'RUNNING', 'status');
-      toast.success(`${machine.name || finalId} set to RUNNING`);
-      setManualInput('');
+      if (isAutoRunMode) {
+        try {
+          setManualInput(''); // Clear UI immediately for Auto-Run
+          await updateMachineStatus(finalId, 'RUNNING', 'status');
+          toast.success(`${machine.name || finalId} set to RUNNING`);
+        } catch (err) {
+          toast.error("Failed to update status");
+        } finally {
+          isProcessingScan.current = false; // Release lock
+        }
+      } else {
+        // Manual Mode
+        setManualInput('');
+        if (showCamera) stopCamera();
+        
+        // 4. Increase delay to 500ms for stable Zebra HID communication
+        setTimeout(() => {
+          setGlobalScanId(finalId);
+          isProcessingScan.current = false; // Release lock
+        }, 500); 
+      }
     } else {
-      // Manual Mode: Open Dialog with a delay
+      toast.error(`No machine found matching "${input}"`);
       setManualInput('');
-      if (showCamera) stopCamera();
-      
-      setTimeout(() => {
-        setGlobalScanId(finalId);
-      }, 150);
+      isProcessingScan.current = false; // Release lock on error
     }
-  } else {
-    toast.error(`No machine found matching "${input}"`);
-  }
-};
-
+  };
   /**
    * CAMERA INITIALIZATION FIX:
    * 1. Uses a longer delay to ensure the 'qr-reader' div is in the DOM.
