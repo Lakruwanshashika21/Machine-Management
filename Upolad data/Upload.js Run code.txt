@@ -1,0 +1,9 @@
+Upload.js Run code
+
+# Initialize a new Node.js project
+npm init -y
+
+# Install the required libraries
+npm install firebase-admin csv-parser
+
+node upload.js

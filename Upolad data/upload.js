@@ -9,7 +9,7 @@ if (!admin.apps.length) {
 }
 const db = admin.firestore();
 
-const CSV_FILE = 'Book1_Sheet5.csv'; 
+const CSV_FILE = 'Book1_Sheet6.csv'; 
 
 const clean = (val) => {
   if (!val || val === '#REF!' || val === 'NaN' || val === 'undefined' || val === '#N/A') return "";
@@ -24,7 +24,6 @@ const mapHealth = (status) => {
   return 'WORKING'; 
 };
 
-// NEW: Helper to determine ownership from CSV
 const mapOwnership = (val) => {
   const s = clean(val).toUpperCase();
   if (s.includes('RENT') || s.includes('HIRE')) return 'RENT';
@@ -47,15 +46,20 @@ async function startUpload() {
         const chunk = results.slice(i, i + chunkSize);
 
         chunk.forEach((row) => {
+          // Clean basic strings
           const section = clean(row.section || row.SECTION).toUpperCase() || "UNKNOWN";
           const rawType = clean(row.type || row.Section);
           const serial = clean(row.serialNo || row['Serial No.']);
           
-          const docId = serial 
-            ? `${section}-${rawType.toUpperCase().replace(/\s+/g, '')}-${serial}` 
-            : `${section}-TEMP-${Math.random().toString(36).substr(2, 5)}`;
+          // FIX: Sanitize components to remove forward slashes before creating docId
+          const safeSection = section.replace(/\//g, '-');
+          const safeType = rawType.toUpperCase().replace(/\s+/g, '').replace(/\//g, '-');
+          const safeSerial = serial.replace(/\//g, '-');
 
-          // NEW: Check if the row is a Koeper or FTK to ensure correct naming
+          const docId = serial 
+            ? `${safeSection}-${safeType}-${safeSerial}` 
+            : `${safeSection}-TEMP-${Math.random().toString(36).substr(2, 5)}`;
+
           const machineType = rawType.toUpperCase().includes('KUPER') ? 'Koeper' : rawType;
 
           const machineData = {
@@ -64,11 +68,8 @@ async function startUpload() {
             machineNumber: clean(row.machineNumber) || "N/A",
             operationalStatus: mapHealth(row.operationalStatus || row.Status),
             status: "IDLE", 
-            
-            // NEW FIELDS INTEGRATION
             ownership: mapOwnership(row.ownership || row.OWNERSHIP),
             rentedDate: clean(row.rentedDate || row['Rented Date']) || "",
-            
             name: clean(row.name || row.DECRIPTION).toLowerCase(),
             brand: clean(row.brand || row.Section).toLowerCase(),
             type: machineType,
@@ -90,8 +91,12 @@ async function startUpload() {
           batch.set(docRef, machineData, { merge: true });
         });
 
-        await batch.commit();
-        console.log(`✅ Updated batch: Rows ${i + 1} to ${Math.min(i + chunkSize, results.length)}`);
+        try {
+          await batch.commit();
+          console.log(`✅ Updated batch: Rows ${i + 1} to ${Math.min(i + chunkSize, results.length)}`);
+        } catch (batchError) {
+          console.error(`❌ Error committing batch at row ${i + 1}:`, batchError);
+        }
       }
       console.log('🏁 Update Finished Successfully!');
       process.exit(0);

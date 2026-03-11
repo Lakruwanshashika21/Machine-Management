@@ -141,29 +141,66 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
 
   // --- EXCEL & PDF REPORTS ---
   const downloadInventoryExcel = () => {
-    const dataToExport = filteredTableMachines.map(m => ({
-      'Machine ID': m.id,
-      'Operational Status': (m as any).operationalStatus || 'WORKING', 
-      'Ownership': (m as any).ownership || 'OWNED',
-      'Rented Company': (m as any).rentedCompany || 'N/A',
-      'Inhouse Gatepass': (m as any).inhouseGatepass || 'N/A',
-      'Current Activity': m.status || 'IDLE',
-      'Location': (m as any).location || 'N/A',
-      'Asset Value': (m as any).machineValue || '0',
-      'Section': sections.find(s => s.id === m.section)?.name || m.section,
-      'Machine Type': m.type,
-      'Machine Name': m.name,
-      'Brand': (m as any).brand || 'N/A',
-      'Serial Number': (m as any).serialNo || 'N/A',
-      'FA Number': (m as any).faNumber || 'N/A',
-    }));
+    const dataToExport = filteredTableMachines.map(m => {
+      // Find section name for better readability in Excel
+      const sectionName = sections.find(s => s.id === m.section)?.name || m.section;
+      
+      return {
+        'Machine ID': m.id,
+        'Barcode Value': (m as any).barcodeValue || 'N/A',
+        'Company ID': (m as any).companyId || 'N/A',
+        'Machine Number': (m as any).machineNumber || '0',
+        'Row Number': (m as any).rowNumber || '0',
+        'Section': sectionName,
+        'Machine Type': m.type || 'N/A',
+        'Machine Name': m.name || 'N/A',
+        'Brand': (m as any).brand || 'N/A',
+        'Model No': (m as any).modelNo || 'N/A',
+        'Serial Number': (m as any).serialNo || 'N/A',
+        'FA Number': (m as any).faNumber || 'N/A',
+        'Location': (m as any).location || 'N/A',
+        'Current Activity': m.status || 'IDLE',
+        'Operational Status': (m as any).operationalStatus || 'WORKING',
+        'Ownership': (m as any).ownership || 'OWNED',
+        'Asset Value': (m as any).machineValue || '0',
+        'Purchase Date': (m as any).purchaseDate || 'N/A',
+        'Rented Date': (m as any).rentedDate || 'N/A',
+        'Needle Size': (m as any).needleSize || 'N/A',
+        'Needle Type': (m as any).needleType || 'N/A',
+        'Last Updated': (m as any).lastUpdated ? new Date((m as any).lastUpdated).toLocaleString() : 'N/A',
+        'User ID': (m as any).userId || 'N/A',
+        // Optional: Include a summary of transfer count
+        'Transfer Count': (m as any).transferHistory?.length || 0
+      };
+    });
 
     const wb = XLSX.utils.book_new();
+    
+    // Create worksheet
     const ws = XLSX.utils.json_to_sheet([]);
-    XLSX.utils.sheet_add_aoa(ws, [["Eskimo Fashions (Pvt) Ltd machine inventory report"], [`Export Date: ${new Date().toLocaleDateString()}`]], { origin: "A1" });
+
+    // Add Titles and Branding
+    XLSX.utils.sheet_add_aoa(ws, [
+      ["Eskimo Fashions (Pvt) Ltd - Comprehensive Machine Inventory Report"], 
+      [`Export Date: ${new Date().toLocaleString()}`],
+      [""] // Spacer row
+    ], { origin: "A1" });
+
+    // Add JSON data starting from row 4
     XLSX.utils.sheet_add_json(ws, dataToExport, { origin: "A4", skipHeader: false });
-    XLSX.utils.book_append_sheet(wb, ws, "Inventory");
-    XLSX.writeFile(wb, `Inventory_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
+
+    // Optional: Set column widths for better visibility
+    const wscols = [
+      {wch: 25}, {wch: 30}, {wch: 25}, {wch: 15}, {wch: 12}, 
+      {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15},
+      {wch: 20}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 20}
+    ];
+    ws['!cols'] = wscols;
+
+    XLSX.utils.book_append_sheet(wb, ws, "Full Inventory");
+    
+    // Generate File
+    XLSX.writeFile(wb, `Full_Inventory_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const downloadTransferHistoryPDF = (machine: any) => {
