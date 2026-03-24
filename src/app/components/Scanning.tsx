@@ -41,78 +41,78 @@ export function Scanning() {
   const isProcessingScan = useRef(false);
 
   const handleIdSubmission = async (input: string, e?: React.KeyboardEvent | React.MouseEvent) => {
-    // 1. Immediately kill the "Enter" event from the scanner so it doesn't bubble up
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
+  if (e) {
+    e.preventDefault();
+    e.stopPropagation();
+  }
 
-    // 2. Anti-Bounce Lock: Prevent the high-speed scanner from triggering this twice
-    if (isProcessingScan.current) return;
+  if (isProcessingScan.current) return;
+  
+  const term = input.trim().toUpperCase();
+  if (!term) return;
+
+  isProcessingScan.current = true; 
+
+  // 1. Search Logic: Find by barcodeValue OR id
+  let machine = machines.find(m => 
+    (m as any).barcodeValue?.toUpperCase() === term || 
+    (m.id && m.id.toUpperCase() === term)
+  );
+  
+  if (!machine) {
+    const cleanSearch = term.replace(/[\s-]/g, '');
+    machine = machines.find((m: any) => {
+      const cleanBarcode = (m.barcodeValue || '').toUpperCase().replace(/[\s-]/g, '');
+      const cleanDbId = (m.id || '').toUpperCase().replace(/[\s-]/g, '');
+      return (cleanBarcode && cleanBarcode.includes(cleanSearch)) || (cleanDbId && cleanDbId.includes(cleanSearch));
+    });
+  }
+  
+  if (machine) {
+    // FIX: If machine.id is empty (common in your CSV), use barcodeValue as the identifier
+    const finalId = machine.id || (machine as any).barcodeValue; 
     
-    const term = input.trim().toUpperCase();
-    if (!term) return;
+    const health = (machine as any).operationalStatus || 'WORKING';
+    const isPhysicallyDown = health === 'BREAKDOWN' || health === 'REMOVED';
 
-    isProcessingScan.current = true; // Engage lock
-
-    // Find the machine
-    let machine = machines.find(m => m.id.toUpperCase() === term);
-    
-    // Fuzzy search fallback
-    if (!machine) {
-      const cleanSearch = term.replace(/[\s-]/g, '');
-      machine = machines.find((m: any) => {
-        const cleanDbId = m.id.toUpperCase().replace(/[\s-]/g, '');
-        return cleanDbId.includes(cleanSearch);
+    if (isPhysicallyDown) {
+      toast.warning(`Machine ${finalId} is in ${health} state.`, {
+        description: "Update health status in the Registry or Maintenance tab."
       });
+      setManualInput('');
+      
+      setTimeout(() => {
+        setGlobalScanId(finalId);
+        isProcessingScan.current = false; 
+      }, 500); 
+      return;
     }
-    
-    if (machine) {
-      const finalId = machine.id;
-      const health = (machine as any).operationalStatus || 'WORKING';
-      const isPhysicallyDown = health === 'BREAKDOWN' || health === 'REMOVED';
 
-      if (isPhysicallyDown) {
-        toast.warning(`Machine ${finalId} is in ${health} state.`, {
-          description: "Please update health status in the Maintenance tab."
-        });
-        setManualInput('');
-        
-        // 3. ENFORCED DELAY: 500ms ensures the Zebra scanner's "Enter" suffix is finished
-        setTimeout(() => {
-          setGlobalScanId(finalId);
-          isProcessingScan.current = false; // Release lock after dialog opens
-        }, 500); 
-        return;
-      }
-
-      if (isAutoRunMode) {
-        try {
-          setManualInput(''); // Clear UI immediately for Auto-Run
-          await updateMachineStatus(finalId, 'RUNNING', 'status');
-          toast.success(`${machine.name || finalId} set to RUNNING`);
-        } catch (err) {
-          toast.error("Failed to update status");
-        } finally {
-          isProcessingScan.current = false; // Release lock
-        }
-      } else {
-        // Manual Mode
-        setManualInput('');
-        if (showCamera) stopCamera();
-        
-        // 4. Increase delay to 500ms for stable Zebra HID communication
-        setTimeout(() => {
-          setGlobalScanId(finalId);
-          isProcessingScan.current = false; // Release lock
-        }, 500); 
+    if (isAutoRunMode) {
+      try {
+        setManualInput(''); 
+        await updateMachineStatus(finalId, 'RUNNING', 'status');
+        toast.success(`${machine.name || finalId} set to RUNNING`);
+      } catch (err) {
+        toast.error("Failed to update status");
+      } finally {
+        isProcessingScan.current = false; 
       }
     } else {
-      toast.error(`No machine found matching "${input}"`);
       setManualInput('');
-      isProcessingScan.current = false; // Release lock on error
+      if (showCamera) stopCamera();
+      
+      setTimeout(() => {
+        setGlobalScanId(finalId);
+        isProcessingScan.current = false; 
+      }, 500); 
     }
-  };
+  } else {
+    toast.error(`No machine found matching "${input}"`);
+    setManualInput('');
+    isProcessingScan.current = false; 
+  }
+};
   /**
    * CAMERA INITIALIZATION FIX:
    * 1. Uses a longer delay to ensure the 'qr-reader' div is in the DOM.

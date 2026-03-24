@@ -90,18 +90,29 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
   const [sectionToDownload, setSectionToDownload] = useState('');
 
   // --- SEARCH LOGIC (ID, BARCODE, SECTION, PLANT) ---
-  const filteredTableMachines = useMemo(() => {
-    return machines.filter(m => {
-      const matchesSection = selectedSectionFilter === 'ALL' || m.section === selectedSectionFilter;
-      const matchesLocation = selectedLocationFilter === 'ALL' || (m as any).location === selectedLocationFilter;
-      const matchesSearch = searchQuery === '' || 
-        m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-        (m as any).barcodeValue?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (m as any).location?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        m.name.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchesSection && matchesLocation && matchesSearch;
-    });
-  }, [machines, selectedSectionFilter, selectedLocationFilter, searchQuery]);
+ const filteredTableMachines = useMemo(() => {
+  const cleanSearch = searchQuery.trim().toLowerCase().replace(/[\s-]/g, '');
+
+  return machines.filter(m => {
+    // 1. Filter by Section and Location
+    const matchesSection = selectedSectionFilter === 'ALL' || m.section === selectedSectionFilter;
+    const matchesLocation = selectedLocationFilter === 'ALL' || (m as any).location === selectedLocationFilter;
+    
+    // 2. Advanced Search Logic
+    const matchesSearch = searchQuery === '' || 
+      // Standard search (ID, Name, Location)
+      m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (m as any).location?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (m as any).barcodeValue?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      
+      // Fuzzy search (Company Barcode without hyphens/spaces)
+      (m as any).barcodeValue?.toLowerCase().replace(/[\s-]/g, '').includes(cleanSearch) ||
+      m.id.toLowerCase().replace(/[\s-]/g, '').includes(cleanSearch);
+
+    return matchesSection && matchesLocation && matchesSearch;
+  });
+}, [machines, selectedSectionFilter, selectedLocationFilter, searchQuery]);
 
   const availableTypesForSelectedSection = useMemo(() => machineTypes.filter(t => t.sectionId === section), [section, machineTypes]);
   const needsNeedleInfo = useMemo(() => type.toUpperCase().includes('SEWING') || type.toUpperCase().includes('SNLS'), [type]);
