@@ -5,6 +5,7 @@ import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
 import { Scanning } from './components/Scanning';
 import { MachineRegistry } from './components/MachineRegistry';
+import { HeadcountManager } from './components/HeadcountManager';
 import { AuditReports } from './components/AuditReports';
 import { UserManagement } from './components/UserManagement';
 import { Toaster } from './components/ui/sonner';
@@ -55,6 +56,7 @@ function AppContent() {
       case 'registry':  return isAdmin ? <MachineRegistry /> : <AccessDenied />;
       case 'users':     return isAdmin ? <UserManagement /> : <AccessDenied />;
       case 'audit':     return isAdmin ? <AuditReports /> : <AccessDenied />;
+      case 'headcount': return isAdmin ? <HeadcountManager /> : <AccessDenied />;
       default:          return <Dashboard />;
     }
   };

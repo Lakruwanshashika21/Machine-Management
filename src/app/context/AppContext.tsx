@@ -2,12 +2,19 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { db, auth } from '../../firebase';
 import { 
   collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, 
-  addDoc, query, orderBy, getDoc 
+  addDoc, query, orderBy, getDoc,
+  arrayUnion // 1. ADDED THIS IMPORT
 } from 'firebase/firestore';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { Machine, AuditLog, ScanMode } from '../types';
 
-interface Section { id: string; name: string; }
+// 2. UPDATED INTERFACE TO INCLUDE HEADCOUNT
+interface Section { 
+  id: string; 
+  name: string; 
+  headcount?: number; 
+  headcountHistory?: any[]; 
+}
 interface MachineType { id: string; name: string; sectionId: string; }
 
 interface AppContextType {
@@ -23,6 +30,8 @@ interface AppContextType {
   deleteSection: (id: string) => Promise<void>;
   addMachineType: (name: string, sectionId: string) => Promise<void>;
   deleteMachineType: (id: string) => Promise<void>;
+  // 3. ADDED TO INTERFACE
+  updateSectionHeadcount: (sectionId: string, amount: number) => Promise<void>;
   scanMode: ScanMode;
   setScanMode: (mode: ScanMode) => void;
   auditLogs: AuditLog[];
@@ -49,7 +58,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [globalScanId, setGlobalScanId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // --- 1. DEFINE HANDLER FUNCTIONS FIRST ---
+  // --- 1. HANDLER FUNCTIONS ---
 
   const addSection = async (name: string) => {
     const cleanName = name.trim().toUpperCase();
@@ -74,7 +83,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!machine) return;
     const time = new Date().toISOString();
     
-    // FIXED: Correct dynamic routing
     const updateData: any = { [fieldName]: value, lastUpdated: time };
 
     if (fieldName === 'status') {
@@ -85,8 +93,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     await updateDoc(doc(db, "machines", machineId), updateData);
     await addDoc(collection(db, "auditLogs"), {
-      timestamp: time, machineId, userName: user?.name || user?.email,
-      action: `Updated ${fieldName}`, newStatus: value
+      timestamp: time, 
+      machineId, 
+      userName: user?.name || user?.email,
+      action: `Updated ${fieldName}`, 
+      newStatus: value
+    });
+  };
+
+  // Inside your AppContext provider logic
+  const updateSectionHeadcount = async (sectionId: string, amount: number) => {
+    const section = sections.find(s => s.id === sectionId);
+    if (!section) return;
+
+    const prevCount = section.headcount || 0;
+    const newCount = Math.max(0, prevCount + amount); // Prevent negative headcount
+
+    const historyEntry = {
+      date: new Date().toISOString(),
+      prevCount,
+      newCount,
+      changedBy: user?.name || 'Admin',
+    };
+
+    // Update Firebase
+    const sectionRef = doc(db, "sections", sectionId);
+    await updateDoc(sectionRef, {
+      headcount: newCount,
+      headcountHistory: arrayUnion(historyEntry)
     });
   };
 
@@ -94,8 +128,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const count = machines.filter(m => m.section === data.section && m.type === data.type).length;
     const newId = `${data.section}-${data.type}-${(count + 1).toString().padStart(3, '0')}`;
     await setDoc(doc(db, "machines", newId), {
-      ...data, id: newId, status: 'IDLE', operationalStatus: data.operationalStatus || 'WORKING',
-      scans: {}, lastUpdated: new Date().toISOString()
+      ...data, 
+      id: newId, 
+      status: 'IDLE', 
+      operationalStatus: data.operationalStatus || 'WORKING',
+      scans: {}, 
+      lastUpdated: new Date().toISOString()
     });
   };
 
@@ -106,7 +144,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await Promise.all(promises);
   };
 
-  // --- 2. EFFECTS ---
+  // --- 2. DATA SYNC EFFECTS ---
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (firebaseUser) => {
@@ -127,18 +165,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => { unsubMachines(); unsubSections(); unsubTypes(); unsubLogs(); };
   }, []);
 
-  // Global Hardware Scanner Listener
+  // --- 3. UPDATED GLOBAL HARDWARE SCANNER LISTENER ---
   useEffect(() => {
     let buffer = '';
+    let lastKeyTime = Date.now();
+
     const handleKeyDown = async (e: KeyboardEvent) => {
       if (isProcessing || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+
+      const currentTime = Date.now();
+      if (currentTime - lastKeyTime > 100) {
+        buffer = '';
+      }
+      lastKeyTime = currentTime;
+
       if (e.key === 'Enter') {
-        if (buffer.length > 2) {
-          const cleanId = buffer.trim().toUpperCase();
-          // Fuzzy search for machines like "Aurora"
-          const machine = machines.find(m => 
-            m.id.toUpperCase().includes(cleanId) || m.name?.toUpperCase().includes(cleanId)
-          );
+        if (buffer.length > 1) {
+          const term = buffer.trim().toUpperCase();
+          const cleanSearch = term.replace(/[\s-]/g, '');
+
+          const machine = machines.find((m: any) => {
+            const cleanId = (m.id || '').toUpperCase().replace(/[\s-]/g, '');
+            const cleanBarcode = (m.barcodeValue || '').toUpperCase().replace(/[\s-]/g, '');
+            return cleanId === cleanSearch || cleanBarcode === cleanSearch;
+          });
+
           if (machine) {
             setIsProcessing(true);
             if (isAutoRunMode) {
@@ -146,24 +197,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
               setTimeout(() => setIsProcessing(false), 500);
             } else {
               setGlobalScanId(machine.id);
-              setTimeout(() => setIsProcessing(false), 1000);
+              setTimeout(() => setIsProcessing(false), 800);
             }
           }
           buffer = ''; 
         }
-      } else if (e.key.length === 1) { buffer += e.key; }
+      } else if (e.key.length === 1) {
+        buffer += e.key;
+      }
     };
+
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [machines, isAutoRunMode, isProcessing]);
+  }, [machines, isAutoRunMode, isProcessing, updateMachineStatus, setGlobalScanId]);
 
   return (
     <AppContext.Provider value={{ 
-      user, logout: () => signOut(auth), machines, sections, machineTypes,
-      addMachine, updateMachineStatus, deleteMachine: (id) => deleteDoc(doc(db, "machines", id)),
-      addSection, deleteSection, addMachineType, deleteMachineType,
-      scanMode, setScanMode, auditLogs, globalStartDay, loading,
-      isAutoRunMode, setIsAutoRunMode, globalScanId, setGlobalScanId, isProcessing
+      user, 
+      logout: () => signOut(auth), 
+      machines, 
+      sections, 
+      machineTypes,
+      addMachine, 
+      updateMachineStatus, 
+      deleteMachine: (id) => deleteDoc(doc(db, "machines", id)),
+      addSection, 
+      deleteSection, 
+      addMachineType, 
+      deleteMachineType,
+      updateSectionHeadcount, // 4. ADDED TO PROVIDER VALUE
+      scanMode, 
+      setScanMode, 
+      auditLogs, 
+      globalStartDay, 
+      loading,
+      isAutoRunMode, 
+      setIsAutoRunMode, 
+      globalScanId, 
+      setGlobalScanId, 
+      isProcessing
     }}>
       {!loading && children}
     </AppContext.Provider>

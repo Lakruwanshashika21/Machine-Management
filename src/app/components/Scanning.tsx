@@ -53,24 +53,21 @@ export function Scanning() {
 
   isProcessingScan.current = true; 
 
-  // 1. Search Logic: Find by barcodeValue OR id
-  let machine = machines.find(m => 
-    (m as any).barcodeValue?.toUpperCase() === term || 
-    (m.id && m.id.toUpperCase() === term)
-  );
+  // 1. UNIVERSAL FUZZY MATCHING
+  // This removes spaces/hyphens from the input AND the database values
+  const cleanSearch = term.replace(/[\s-]/g, '');
   
-  if (!machine) {
-    const cleanSearch = term.replace(/[\s-]/g, '');
-    machine = machines.find((m: any) => {
-      const cleanBarcode = (m.barcodeValue || '').toUpperCase().replace(/[\s-]/g, '');
-      const cleanDbId = (m.id || '').toUpperCase().replace(/[\s-]/g, '');
-      return (cleanBarcode && cleanBarcode.includes(cleanSearch)) || (cleanDbId && cleanDbId.includes(cleanSearch));
-    });
-  }
+  const machine = machines.find((m: any) => {
+    const cleanId = (m.id || '').toUpperCase().replace(/[\s-]/g, '');
+    const cleanBarcode = (m.barcodeValue || '').toUpperCase().replace(/[\s-]/g, '');
+    
+    // Check if the scanned input matches either the internal ID or the Company Barcode
+    return cleanId === cleanSearch || cleanBarcode === cleanSearch;
+  });
   
   if (machine) {
-    // FIX: If machine.id is empty (common in your CSV), use barcodeValue as the identifier
-    const finalId = machine.id || (machine as any).barcodeValue; 
+    // IMPORTANT: Always use machine.id for Firebase updates to keep data consistent
+    const finalId = machine.id; 
     
     const health = (machine as any).operationalStatus || 'WORKING';
     const isPhysicallyDown = health === 'BREAKDOWN' || health === 'REMOVED';
@@ -80,32 +77,33 @@ export function Scanning() {
         description: "Update health status in the Registry or Maintenance tab."
       });
       setManualInput('');
-      
-      setTimeout(() => {
-        setGlobalScanId(finalId);
-        isProcessingScan.current = false; 
-      }, 500); 
+      setGlobalScanId(finalId);
+      isProcessingScan.current = false; 
       return;
     }
 
+    // 2. AUTO-RUN LOGIC
     if (isAutoRunMode) {
       try {
         setManualInput(''); 
+        // This now works perfectly whether you scanned the ID or the Company Barcode
         await updateMachineStatus(finalId, 'RUNNING', 'status');
-        toast.success(`${machine.name || finalId} set to RUNNING`);
+        toast.success(`${machine.name || finalId} logged as RUNNING`);
       } catch (err) {
         toast.error("Failed to update status");
       } finally {
         isProcessingScan.current = false; 
       }
     } else {
+      // 3. MANUAL SELECTION LOGIC
       setManualInput('');
       if (showCamera) stopCamera();
       
+      // Small delay to ensure UI transitions smoothly
       setTimeout(() => {
         setGlobalScanId(finalId);
         isProcessingScan.current = false; 
-      }, 500); 
+      }, 300); 
     }
   } else {
     toast.error(`No machine found matching "${input}"`);

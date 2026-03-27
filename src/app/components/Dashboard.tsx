@@ -22,6 +22,7 @@ export function Dashboard() {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [isDisplayMode, setIsDisplayMode] = useState(false);
   const [expandedSections, setExpandedSections] = useState<string[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [expandedTypes, setExpandedTypes] = useState<string[]>([]);
   const [scanFilter, setScanFilter] = useState<'ALL' | 'scan1' | 'scan2' | 'scan3'>('ALL');
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -32,21 +33,44 @@ export function Dashboard() {
   }, []);
 
   const filteredMachines = useMemo(() => {
-    return machines
-      .filter((m) => m.status !== 'NOT_WORKING')
-      .map((m) => {
-        const isUpdatedOnDate = m.lastUpdated?.startsWith(selectedDate);
-        return {
-          ...m,
-          status: isUpdatedOnDate ? m.status : 'IDLE',
-          displayScans: isUpdatedOnDate ? m.scans : {
-            scan1: { status: 'IDLE' },
-            scan2: { status: 'IDLE' },
-            scan3: { status: 'IDLE' }
-          }
-        };
-      });
-  }, [machines, selectedDate]);
+  // Pre-clean the search query for fuzzy matching
+  const cleanQuery = searchQuery.toUpperCase().replace(/[\s-]/g, '');
+
+  return machines
+    .filter((m) => {
+      // 1. Hide machines marked as NOT_WORKING
+      if (m.status === 'NOT_WORKING') return false;
+
+      // 2. Apply Search Filter (ID, Name, or Company Barcode)
+      if (searchQuery !== '') {
+        const cleanId = m.id.toUpperCase().replace(/[\s-]/g, '');
+        const cleanName = (m.name || '').toUpperCase().replace(/[\s-]/g, '');
+        const cleanBarcode = (m.barcodeValue || '').toUpperCase().replace(/[\s-]/g, '');
+
+        const matchesSearch = 
+          cleanId.includes(cleanQuery) || 
+          cleanName.includes(cleanQuery) || 
+          cleanBarcode.includes(cleanQuery);
+
+        if (!matchesSearch) return false;
+      }
+
+      return true;
+    })
+    .map((m) => {
+      const isUpdatedOnDate = m.lastUpdated?.startsWith(selectedDate);
+      return {
+        ...m,
+        // If not updated on selected date, show as IDLE
+        status: isUpdatedOnDate ? m.status : 'IDLE',
+        displayScans: isUpdatedOnDate ? m.scans : {
+          scan1: { status: 'IDLE' },
+          scan2: { status: 'IDLE' },
+          scan3: { status: 'IDLE' }
+        }
+      };
+    });
+}, [machines, selectedDate, searchQuery]); // Added searchQuery to dependencies
 
   // Updated Stats for 5 KPIs
   const stats = useMemo(() => {
@@ -254,16 +278,18 @@ export function Dashboard() {
           </CardContent>
         </Card>
 
-        {/* TREE VIEW - UPDATED WITH MAINTAIN COLUMN */}
+        {/* TREE VIEW - UPDATED WITH STAFF/HEADCOUNT COLUMN */}
         <Card className={`lg:col-span-8 shadow-xl ${isDisplayMode ? 'bg-slate-900 border-slate-800' : ''}`}>
           <CardHeader className={`border-b flex flex-row items-center justify-between ${isDisplayMode ? 'border-slate-800' : 'bg-slate-50/50'}`}>
             <CardTitle className={isDisplayMode ? 'text-white font-black uppercase tracking-widest' : 'font-black'}>Hierarchy Analysis</CardTitle>
             <div className="hidden sm:flex gap-8 text-[10px] font-black text-slate-400 uppercase tracking-widest mr-4">
-               <div className="w-12 text-center">Total</div>
-               <div className="w-12 text-center text-green-600">Run</div>
-               <div className="w-12 text-center text-red-600">Idle</div>
-               <div className="w-12 text-center text-amber-600">Mtn</div>
-               <div className="w-12 text-center text-blue-600">%</div>
+              {/* STAFF HEADER POSITIONED BEFORE TOTAL */}
+              <div className="w-12 text-center text-blue-500">Staff</div> 
+              <div className="w-12 text-center">Total</div>
+              <div className="w-12 text-center text-green-600">Run</div>
+              <div className="w-12 text-center text-red-600">Idle</div>
+              <div className="w-12 text-center text-amber-600">Mtn</div>
+              <div className="w-12 text-center text-blue-600">%</div>
             </div>
           </CardHeader>
 
@@ -280,7 +306,13 @@ export function Dashboard() {
                       {isExpanded ? <ChevronDown className="text-blue-500" /> : <ChevronRight className="text-slate-500" />}
                       <span className={`font-black uppercase tracking-tight ${isDisplayMode ? 'text-xl text-white' : 'text-lg text-slate-900'}`}>{sec.name}</span>
                     </div>
+                    
                     <div className="flex gap-8 text-[11px] font-black mr-4 tabular-nums">
+                      {/* SECTION HEADCOUNT DISPLAY */}
+                      <div className="w-12 text-center text-blue-600 bg-blue-50/50 rounded py-0.5 border border-blue-100/50">
+                        {sec.headcount || 0}
+                      </div>
+
                       <div className="w-12 text-center text-slate-500">{secStats.total}</div>
                       <div className="w-12 text-center text-green-500">{secStats.running}</div>
                       <div className="w-12 text-center text-red-500">{secStats.idle}</div>
@@ -304,10 +336,13 @@ export function Dashboard() {
                                 <span className={`text-xs font-black uppercase tracking-widest ${isDisplayMode ? 'text-slate-300' : 'text-slate-500'}`}>{type.name}</span>
                               </div>
                               <div className="flex gap-8 text-[10px] font-bold mr-4 opacity-80 tabular-nums">
+                                {/* SPACER TO KEEP ALIGNMENT WITH 'STAFF' COLUMN */}
+                                <div className="w-12" /> 
+                                
                                 <div className="w-12 text-center text-slate-500">{typeStats.total}</div>
                                 <div className="w-12 text-center text-green-500">{typeStats.running}</div>
-                                <div className="w-12 text-center text-red-500">{typeStats.idle}</div>
-                                <div className="w-12 text-center text-amber-500">{typeStats.maintain}</div>
+                                <div className="w-12 text-center text-red-600">{typeStats.idle}</div>
+                                <div className="w-12 text-center text-amber-600">{typeStats.maintain}</div>
                                 <div className="w-12 text-center text-blue-500">{typeStats.utilization}%</div>
                               </div>
                             </div>
