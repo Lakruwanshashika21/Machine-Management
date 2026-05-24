@@ -2,13 +2,11 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { db, auth } from '../../firebase';
 import { 
   collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, 
-  addDoc, query, orderBy, getDoc,
-  arrayUnion // 1. ADDED THIS IMPORT
+  addDoc, query, orderBy, getDoc, arrayUnion, writeBatch
 } from 'firebase/firestore';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { Machine, AuditLog, ScanMode } from '../types';
 
-// 2. UPDATED INTERFACE TO INCLUDE HEADCOUNT
 interface Section { 
   id: string; 
   name: string; 
@@ -17,12 +15,42 @@ interface Section {
 }
 interface MachineType { id: string; name: string; sectionId: string; }
 
+interface Sublocation {
+  id: string;          // Formatted as: MAINSECTION_SUBLOCATIONNAME
+  name: string;
+  sectionId: string;
+  linesCount: number;
+}
+
+// NEW STRUCTURE: Explicit row tracking profile metadata matching custom constraints
+interface RegisteredRow {
+  id: string;          // Formatted as: SUBLOCATIONID_ROWNAME
+  rowNumber: string;
+  sublocationId: string;
+  sectionId: string;
+}
+
+export interface LayoutSession {
+  sectionId: string;
+  sublocationId: string;
+  rowNumber: string;
+  scannedMachines: Array<{
+    machineId: string;
+    serialNo: string;
+    modelNo: string;
+    type: string;
+    rowIndex: number;
+  }>;
+}
+
 interface AppContextType {
   user: any | null;
   logout: () => void;
   machines: Machine[];
   sections: Section[];
   machineTypes: MachineType[];
+  sublocations: Sublocation[];
+  registeredRows: RegisteredRow[]; // NEW Array binding node hook
   addMachine: (machineData: any) => Promise<void>;
   updateMachineStatus: (machineId: string, value: string, fieldName?: 'status' | 'operationalStatus') => Promise<void>;
   deleteMachine: (machineId: string) => Promise<void>;
@@ -30,8 +58,15 @@ interface AppContextType {
   deleteSection: (id: string) => Promise<void>;
   addMachineType: (name: string, sectionId: string) => Promise<void>;
   deleteMachineType: (id: string) => Promise<void>;
-  // 3. ADDED TO INTERFACE
   updateSectionHeadcount: (sectionId: string, amount: number) => Promise<void>;
+  
+  // NEW LAYOUT, ROW, AND SUBLOCATION PRIMITIVES
+  addSublocation: (sectionId: string, name: string, linesCount?: number) => Promise<void>;
+  deleteSublocation: (id: string) => Promise<void>;
+  addRegisteredRow: (sectionId: string, sublocationId: string, rowName: string) => Promise<void>; // NEW
+  deleteRegisteredRow: (id: string) => Promise<void>; // NEW
+  saveLayoutConfiguration: (session: LayoutSession) => Promise<void>;
+
   scanMode: ScanMode;
   setScanMode: (mode: ScanMode) => void;
   auditLogs: AuditLog[];
@@ -51,6 +86,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [machines, setMachines] = useState<Machine[]>([]);
   const [sections, setSections] = useState<Section[]>([]);
   const [machineTypes, setMachineTypes] = useState<MachineType[]>([]);
+  const [sublocations, setSublocations] = useState<Sublocation[]>([]);
+  const [registeredRows, setRegisteredRows] = useState<RegisteredRow[]>([]); // NEW state pool binding hook
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [scanMode, setScanMode] = useState<ScanMode>('BLUETOOTH');
   const [loading, setLoading] = useState(true);
@@ -58,8 +95,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [globalScanId, setGlobalScanId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
 
-  // --- 1. HANDLER FUNCTIONS ---
-
+  // Core Management Handlers
   const addSection = async (name: string) => {
     const cleanName = name.trim().toUpperCase();
     await setDoc(doc(db, "sections", cleanName), { name: cleanName });
@@ -78,11 +114,75 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await deleteDoc(doc(db, "machineTypes", id));
   };
 
+  // NEW LAYOUT METHOD ENGINES
+  const addSublocation = async (sectionId: string, name: string, linesCount: number = 99) => {
+    const cleanName = name.trim().toUpperCase().replace(/\s+/g, '_');
+    const sublocationId = `${sectionId}_${cleanName}`;
+    await setDoc(doc(db, "sublocations", sublocationId), {
+      id: sublocationId,
+      name: name.trim().toUpperCase(),
+      sectionId,
+      linesCount: Number(linesCount)
+    });
+  };
+    
+  const deleteSublocation = async (id: string) => {
+    await deleteDoc(doc(db, "sublocations", id));
+  };
+
+  // NEW explicit sublocation line row registrations tracker logic block
+  const addRegisteredRow = async (sectionId: string, sublocationId: string, rowName: string) => {
+    const cleanRowName = rowName.trim().toUpperCase();
+    const rowId = `${sublocationId}_ROW_${cleanRowName}`;
+    await setDoc(doc(db, "registeredRows", rowId), {
+      id: rowId,
+      rowNumber: cleanRowName,
+      sublocationId,
+      sectionId
+    });
+  };
+
+  const deleteRegisteredRow = async (id: string) => {
+    await deleteDoc(doc(db, "registeredRows", id));
+  };
+
+  const saveLayoutConfiguration = async (session: LayoutSession) => {
+    const batch = writeBatch(db);
+    const time = new Date().toISOString();
+    const authorizedUser = user?.name || user?.email || 'Admin';
+
+    for (const item of session.scannedMachines) {
+      const machineRef = doc(db, "machines", item.machineId);
+      
+      // Update data mapping schema attributes inside machine record
+      batch.update(machineRef, {
+        section: session.sectionId,
+        sublocationId: session.sublocationId,
+        rowNumber: session.rowNumber,
+        rowIndex: item.rowIndex,
+        lastUpdated: time,
+        layoutConfiguredAt: time,
+        layoutConfiguredBy: authorizedUser
+      });
+
+      // Append historical audit data trail records
+      const auditRef = doc(collection(db, "auditLogs"));
+      batch.set(auditRef, {
+        timestamp: time,
+        machineId: item.machineId,
+        userName: authorizedUser,
+        action: `Layout Grid Map`,
+        newStatus: `Row: ${session.rowNumber} | Index: ${item.rowIndex} under ${session.sublocationId}`
+      });
+    }
+
+    await batch.commit();
+  };
+
   const updateMachineStatus = async (machineId: string, value: string, fieldName: 'status' | 'operationalStatus' = 'status') => {
     const machine = machines.find(m => m.id === machineId);
     if (!machine) return;
     const time = new Date().toISOString();
-    
     const updateData: any = { [fieldName]: value, lastUpdated: time };
 
     if (fieldName === 'status') {
@@ -101,26 +201,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  // Inside your AppContext provider logic
   const updateSectionHeadcount = async (sectionId: string, amount: number) => {
     const section = sections.find(s => s.id === sectionId);
     if (!section) return;
-
     const prevCount = section.headcount || 0;
-    const newCount = Math.max(0, prevCount + amount); // Prevent negative headcount
+    const newCount = Math.max(0, prevCount + amount);
 
-    const historyEntry = {
-      date: new Date().toISOString(),
-      prevCount,
-      newCount,
-      changedBy: user?.name || 'Admin',
-    };
-
-    // Update Firebase
     const sectionRef = doc(db, "sections", sectionId);
     await updateDoc(sectionRef, {
       headcount: newCount,
-      headcountHistory: arrayUnion(historyEntry)
+      headcountHistory: arrayUnion({
+        date: new Date().toISOString(),
+        prevCount,
+        newCount,
+        changedBy: user?.name || 'Admin',
+      })
     });
   };
 
@@ -144,8 +239,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await Promise.all(promises);
   };
 
-  // --- 2. DATA SYNC EFFECTS ---
-
+  // Auth Synchronization Effect
   useEffect(() => {
     return onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
@@ -156,16 +250,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  // Collection Synced Pipelines
   useEffect(() => {
     const unsubMachines = onSnapshot(collection(db, "machines"), (s) => setMachines(s.docs.map(d => ({ id: d.id, ...d.data() } as Machine))));
     const unsubSections = onSnapshot(collection(db, "sections"), (s) => setSections(s.docs.map(d => ({ id: d.id, ...d.data() } as Section))));
     const unsubTypes = onSnapshot(collection(db, "machineTypes"), (s) => setMachineTypes(s.docs.map(d => ({ id: d.id, ...d.data() } as MachineType))));
+    const unsubSublocs = onSnapshot(collection(db, "sublocations"), (s) => setSublocations(s.docs.map(d => ({ id: d.id, ...d.data() } as Sublocation))));
+    const unsubRows = onSnapshot(collection(db, "registeredRows"), (s) => setRegisteredRows(s.docs.map(d => ({ id: d.id, ...d.data() } as RegisteredRow)))); // NEW snapshot listener tracking link
     const qLogs = query(collection(db, "auditLogs"), orderBy("timestamp", "desc"));
     const unsubLogs = onSnapshot(qLogs, (s) => setAuditLogs(s.docs.map(d => ({ id: d.id, ...d.data() } as AuditLog))));
-    return () => { unsubMachines(); unsubSections(); unsubTypes(); unsubLogs(); };
+    
+    return () => { unsubMachines(); unsubSections(); unsubTypes(); unsubSublocs(); unsubRows(); unsubLogs(); };
   }, []);
 
-  // --- 3. UPDATED GLOBAL HARDWARE SCANNER LISTENER ---
+  // Peripheral Interface Hardware Attachment Pipeline
   useEffect(() => {
     let buffer = '';
     let lastKeyTime = Date.now();
@@ -174,33 +272,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
       if (isProcessing || e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       const currentTime = Date.now();
-      if (currentTime - lastKeyTime > 100) {
-        buffer = '';
-      }
+      if (currentTime - lastKeyTime > 100) buffer = '';
       lastKeyTime = currentTime;
 
       if (e.key === 'Enter') {
         if (buffer.length > 1) {
           const term = buffer.trim().toUpperCase();
-          const cleanSearch = term.replace(/[\s-]/g, '');
-
-          const machine = machines.find((m: any) => {
-            const cleanId = (m.id || '').toUpperCase().replace(/[\s-]/g, '');
-            const cleanBarcode = (m.barcodeValue || '').toUpperCase().replace(/[\s-]/g, '');
-            return cleanId === cleanSearch || cleanBarcode === cleanSearch;
-          });
-
-          if (machine) {
-            setIsProcessing(true);
-            if (isAutoRunMode) {
-              await updateMachineStatus(machine.id, 'RUNNING', 'status');
-              setTimeout(() => setIsProcessing(false), 500);
-            } else {
-              setGlobalScanId(machine.id);
-              setTimeout(() => setIsProcessing(false), 800);
-            }
-          }
-          buffer = ''; 
+          window.dispatchEvent(new CustomEvent('HARDWARE_BARCODE_SCANNED', { detail: term }));
+          buffer = '';
         }
       } else if (e.key.length === 1) {
         buffer += e.key;
@@ -209,33 +288,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [machines, isAutoRunMode, isProcessing, updateMachineStatus, setGlobalScanId]);
+  }, [isProcessing]);
 
   return (
     <AppContext.Provider value={{ 
-      user, 
-      logout: () => signOut(auth), 
-      machines, 
-      sections, 
-      machineTypes,
-      addMachine, 
-      updateMachineStatus, 
-      deleteMachine: (id) => deleteDoc(doc(db, "machines", id)),
-      addSection, 
-      deleteSection, 
-      addMachineType, 
-      deleteMachineType,
-      updateSectionHeadcount, // 4. ADDED TO PROVIDER VALUE
-      scanMode, 
-      setScanMode, 
-      auditLogs, 
-      globalStartDay, 
-      loading,
-      isAutoRunMode, 
-      setIsAutoRunMode, 
-      globalScanId, 
-      setGlobalScanId, 
-      isProcessing
+      user, logout: () => signOut(auth), machines, sections, machineTypes, sublocations, registeredRows,
+      addMachine, updateMachineStatus, deleteMachine: (id) => deleteDoc(doc(db, "machines", id)),
+      addSection, deleteSection, addMachineType, deleteMachineType, updateSectionHeadcount,
+      addSublocation, deleteSublocation, addRegisteredRow, deleteRegisteredRow, saveLayoutConfiguration,
+      scanMode, setScanMode, auditLogs, globalStartDay, loading,
+      isAutoRunMode, setIsAutoRunMode, globalScanId, setGlobalScanId, isProcessing
     }}>
       {!loading && children}
     </AppContext.Provider>

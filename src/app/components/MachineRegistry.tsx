@@ -20,7 +20,6 @@ import * as XLSX from 'xlsx';
 
 const NEEDLE_TYPES = ["DBx1", "DPx5", "DCx27", "TVx7", "UY128GAS", "TQx1"];
 
-
 const OPERATIONAL_STATUS_OPTIONS = [
   { id: 'WORKING', label: 'Working', color: 'bg-green-500' },
   { id: 'HALF_WORKING', label: 'Half Working', color: 'bg-amber-500' },
@@ -30,22 +29,31 @@ const OPERATIONAL_STATUS_OPTIONS = [
 
 export function MachineRegistry() {
   const { 
-  machines = [], 
-  sections = [], 
-  machineTypes = [], 
-  addMachine, 
-  deleteMachine, 
-  addSection, 
-  deleteSection, 
-  addMachineType, 
-  deleteMachineType, 
-  updateMachineStatus, // Use this if updateMachineTransfer is not defined in AppContext
-  user 
-} = useApp();
+    machines = [], 
+    sections = [], 
+    machineTypes = [], 
+    sublocations = [], // Integrated from AppContext
+    addMachine, 
+    deleteMachine, 
+    addSection, 
+    deleteSection, 
+    addMachineType, 
+    deleteMachineType, 
+    addSublocation,    // Integrated from AppContext
+    deleteSublocation, // Integrated from AppContext
+    updateMachineStatus, 
+    user 
+  } = useApp();
 
-const [newSectionName, setNewSectionName] = useState('');
-const [newTypeName, setNewTypeName] = useState('');
-const [targetSectionForType, setTargetSectionForType] = useState('');
+  const [newSectionName, setNewSectionName] = useState('');
+  const [newTypeName, setNewTypeName] = useState('');
+  const [targetSectionForType, setTargetSectionForType] = useState('');
+  
+  // NEW: Sublocation Registration Form States
+  const [targetSectionForSub, setTargetSectionForSub] = useState('');
+  const [newSublocationName, setNewSublocationName] = useState('');
+  const [newSublocationLines, setNewSublocationLines] = useState('6');
+
   // --- UI & MODAL STATES ---
   const [showAddForm, setShowAddForm] = useState(false);
   const [showManageConfig, setShowManageConfig] = useState(false);
@@ -85,39 +93,33 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
   const [gatepassNo, setGatepassNo] = useState('');
   const [isFinishingRent, setIsFinishingRent] = useState(false);
 
-  // --- CONFIG MODAL STATES (FIXED REFERENCE ERROR) ---
-
   const [sectionToDownload, setSectionToDownload] = useState('');
 
-  // --- SEARCH LOGIC (ID, BARCODE, SECTION, PLANT) ---
- const filteredTableMachines = useMemo(() => {
-  const cleanSearch = searchQuery.trim().toLowerCase().replace(/[\s-]/g, '');
+  // --- SEARCH LOGIC (ID, BARCODE, SECTION, PLANT, SERIAL) ---
+  const filteredTableMachines = useMemo(() => {
+    const cleanSearch = searchQuery.trim().toLowerCase().replace(/[\s-]/g, '');
 
-  return machines.filter(m => {
-    // 1. Filter by Section and Location
-    const matchesSection = selectedSectionFilter === 'ALL' || m.section === selectedSectionFilter;
-    const matchesLocation = selectedLocationFilter === 'ALL' || (m as any).location === selectedLocationFilter;
-    
-    // 2. Advanced Search Logic
-    const matchesSearch = searchQuery === '' || 
-      // Standard search (ID, Name, Location)
-      m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-      m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (m as any).location?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (m as any).barcodeValue?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    return machines.filter(m => {
+      const matchesSection = selectedSectionFilter === 'ALL' || m.section === selectedSectionFilter;
+      const matchesLocation = selectedLocationFilter === 'ALL' || (m as any).location === selectedLocationFilter;
       
-      // Fuzzy search (Company Barcode without hyphens/spaces)
-      (m as any).barcodeValue?.toLowerCase().replace(/[\s-]/g, '').includes(cleanSearch) ||
-      m.id.toLowerCase().replace(/[\s-]/g, '').includes(cleanSearch);
+      const matchesSearch = searchQuery === '' || 
+        m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+        m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (m as any).location?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (m as any).barcodeValue?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (m as any).serialNo?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (m as any).barcodeValue?.toLowerCase().replace(/[\s-]/g, '').includes(cleanSearch) || 
+        m.id.toLowerCase().replace(/[\s-]/g, '').includes(cleanSearch);
 
-    return matchesSection && matchesLocation && matchesSearch;
-  });
-}, [machines, selectedSectionFilter, selectedLocationFilter, searchQuery]);
+      return matchesSection && matchesLocation && matchesSearch;
+    });
+  }, [machines, selectedSectionFilter, selectedLocationFilter, searchQuery]);
 
   const availableTypesForSelectedSection = useMemo(() => machineTypes.filter(t => t.sectionId === section), [section, machineTypes]);
   const needsNeedleInfo = useMemo(() => type.toUpperCase().includes('SEWING') || type.toUpperCase().includes('SNLS'), [type]);
 
-  // --- PRINTING ENGINE (FIXED ASYNC LOGIC) ---
+  // --- PRINTING ENGINE ---
   const fetchActiveCanvas = async (id: string): Promise<string | null> => {
     const container = document.getElementById(`barcode-render-${id}`);
     if (!container) return null;
@@ -150,10 +152,35 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
     setIsGenerating(false);
   };
 
+  // NEW: Dedicated Barcode Generator Engine for Sublocations and Row Lines
+  const downloadLocationBarcodes = (targetType: 'SUBLOCATION' | 'LINE', targetId: string) => {
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [50, 30] });
+    const sub = sublocations.find(s => s.id === targetId);
+    if (!sub) return alert("Sublocation layout parameter profile data match not found.");
+
+    if (targetType === 'SUBLOCATION') {
+      doc.setFontSize(10);
+      doc.text(`SUB: ${sub.name}`, 25, 8, { align: 'center' });
+      doc.setFontSize(6);
+      doc.text(`ID: LOC_${sub.id}`, 25, 26, { align: 'center' });
+      doc.save(`Barcode_Sublocation_${sub.name}.pdf`);
+    } else {
+      let pageCount = 0;
+      for (let i = 1; i <= sub.linesCount; i++) {
+        if (pageCount > 0) doc.addPage([50, 30], 'landscape');
+        doc.setFontSize(10);
+        doc.text(`${sub.name} - ROW 0${i}`, 25, 8, { align: 'center' });
+        doc.setFontSize(6);
+        doc.text(`ID: ROW_${sub.id}_${i}`, 25, 26, { align: 'center' });
+        pageCount++;
+      }
+      doc.save(`Barcodes_Lines_${sub.name}.pdf`);
+    }
+  };
+
   // --- EXCEL & PDF REPORTS ---
   const downloadInventoryExcel = () => {
     const dataToExport = filteredTableMachines.map(m => {
-      // Find section name for better readability in Excel
       const sectionName = sections.find(s => s.id === m.section)?.name || m.section;
       
       return {
@@ -161,8 +188,10 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
         'Barcode Value': (m as any).barcodeValue || 'N/A',
         'Company ID': (m as any).companyId || 'N/A',
         'Machine Number': (m as any).machineNumber || '0',
-        'Row Number': (m as any).rowNumber || '0',
-        'Section': sectionName,
+        'Main Section': sectionName,
+        'Sublocation Zone ID': (m as any).sublocationId || 'UNASSIGNED',
+        'Row Grid Number': (m as any).rowNumber || 'N/A',
+        'Row Grid Index Position': (m as any).rowIndex !== undefined ? (m as any).rowIndex : 'N/A',
         'Machine Type': m.type || 'N/A',
         'Machine Name': m.name || 'N/A',
         'Brand': (m as any).brand || 'N/A',
@@ -180,37 +209,29 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
         'Needle Type': (m as any).needleType || 'N/A',
         'Last Updated': (m as any).lastUpdated ? new Date((m as any).lastUpdated).toLocaleString() : 'N/A',
         'User ID': (m as any).userId || 'N/A',
-        // Optional: Include a summary of transfer count
         'Transfer Count': (m as any).transferHistory?.length || 0
       };
     });
 
     const wb = XLSX.utils.book_new();
-    
-    // Create worksheet
     const ws = XLSX.utils.json_to_sheet([]);
 
-    // Add Titles and Branding
     XLSX.utils.sheet_add_aoa(ws, [
-      ["Eskimo Fashions (Pvt) Ltd - Comprehensive Machine Inventory Report"], 
+      ["Eskimo Fashions (Pvt) Ltd - Comprehensive Machine Inventory & Grid Layout Report"], 
       [`Export Date: ${new Date().toLocaleString()}`],
-      [""] // Spacer row
+      [""]
     ], { origin: "A1" });
 
-    // Add JSON data starting from row 4
     XLSX.utils.sheet_add_json(ws, dataToExport, { origin: "A4", skipHeader: false });
 
-    // Optional: Set column widths for better visibility
     const wscols = [
-      {wch: 25}, {wch: 30}, {wch: 25}, {wch: 15}, {wch: 12}, 
-      {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15},
+      {wch: 25}, {wch: 30}, {wch: 25}, {wch: 15}, {wch: 15}, 
+      {wch: 20}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 15},
       {wch: 20}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 20}
     ];
     ws['!cols'] = wscols;
 
     XLSX.utils.book_append_sheet(wb, ws, "Full Inventory");
-    
-    // Generate File
     XLSX.writeFile(wb, `Full_Inventory_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
@@ -235,96 +256,81 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
 
   // --- ACTION HANDLERS ---
   const handleTransferSubmit = async () => {
-        if (!gatepassNo.trim()) return alert("Gatepass Number is mandatory!");
-        if (!isFinishingRent && !transferTo) return alert("Please select a destination location!");
+    if (!gatepassNo.trim()) return alert("Gatepass Number is mandatory!");
+    if (!isFinishingRent && !transferTo) return alert("Please select a destination location!");
 
-        // 1. Create the detailed record for the Machine's History
-        const newRecord = {
-          date: new Date().toISOString(),
-          from: selectedMachine.location || 'INITIAL REG',
-          to: isFinishingRent ? 'VENDOR RETURNED' : transferTo,
-          byWho: user?.name || 'Authorized Admin',
-          gatepass: gatepassNo,
-          type: isFinishingRent ? 'RENT_FINISHED' : 'TRANSFER'
-        };
-
-        try {
-          // 2. Prepare the updated history array
-          const updatedHistory = [...(selectedMachine.transferHistory || []), newRecord];
-
-          // 3. Update the Machine History (Silent update - no audit log)
-          // Note: If your updateMachineStatus always logs to audit, 
-          // we use a specific audit string for the second call.
-          await updateMachineStatus(selectedMachine.id, updatedHistory, 'transferHistory');
-
-          // 4. Create a readable STRING for the Audit Report (Prevents the "Object" crash)
-          const auditMessage = isFinishingRent 
-            ? `RENT FINISHED (GP: ${gatepassNo})` 
-            : `TRANSFERRED TO ${transferTo} (GP: ${gatepassNo})`;
-
-          // 5. Update Location and trigger the Audit Log with the String message
-          await updateMachineStatus(selectedMachine.id, newRecord.to, 'location');
-          await updateMachineStatus(selectedMachine.id, auditMessage, 'status'); 
-          
-          if (isFinishingRent) {
-            await updateMachineStatus(selectedMachine.id, 'REMOVED', 'operationalStatus');
-          }
-          
-          // Reset UI
-          setShowTransferForm(false);
-          setGatepassNo('');
-          setTransferTo('');
-          setIsFinishingRent(false);
-          alert("Machine transfer successfully logged!");
-        } catch (err) {
-          console.error("Transfer Error:", err);
-          alert("Could not save transfer. Please check connection.");
-        }
-      };
-
-    const handleSubmit = async (e: React.FormEvent) => {
-      e.preventDefault();
-      
-      // 1. Prepare the standard machine data object
-      await addMachine({ 
-        section,
-        type,
-        brand,
-        purchaseDate,
-        serialNo,
-        faNumber,
-        modelNo,
-        dept,
-        name,
-        status: 'IDLE',
-        operationalStatus,
-        location,
-        companyId,
-        barcodeValue,
-        machineValue,
-        ownership,
-        
-        // 2. Logic to handle Rented vs Owned specific data
-        rentedDate: ownership === 'RENT' ? rentedDate : '',
-        rentedCompany: ownership === 'RENT' ? rentedCompany : 'N/A',
-        inhouseGatepass: ownership === 'RENT' ? inhouseGatepass : 'N/A',
-        
-        // 3. Initialize history and needle info
-        transferHistory: [], // Crucial: Initialize as empty to prevent "ReferenceError" later
-        needleSize: needsNeedleInfo ? needleSize : 'N/A',
-        needleType: needsNeedleInfo ? needleType : 'N/A'
-      });
-
-      // 4. Reset all form fields to empty states
-      setSection(''); setType(''); setBrand(''); setPurchaseDate('');
-      setSerialNo(''); setFaNumber(''); setModelNo(''); setDept('');
-      setName(''); setNeedleSize(''); setNeedleType(''); setLocation('');
-      setCompanyId(''); setBarcodeValue(''); setMachineValue('');
-      setOperationalStatus('WORKING'); setOwnership('OWNED'); setRentedDate('');
-      setRentedCompany(''); setInhouseGatepass('');
-      
-      setShowAddForm(false);
+    const newRecord = {
+      date: new Date().toISOString(),
+      from: selectedMachine.location || 'INITIAL REG',
+      to: isFinishingRent ? 'VENDOR RETURNED' : transferTo,
+      byWho: user?.name || 'Authorized Admin',
+      gatepass: gatepassNo,
+      type: isFinishingRent ? 'RENT_FINISHED' : 'TRANSFER'
     };
+
+    try {
+      const updatedHistory = [...(selectedMachine.transferHistory || []), newRecord];
+      await updateMachineStatus(selectedMachine.id, updatedHistory, 'transferHistory');
+
+      const auditMessage = isFinishingRent 
+        ? `RENT FINISHED (GP: ${gatepassNo})` 
+        : `TRANSFERRED TO ${transferTo} (GP: ${gatepassNo})`;
+
+      await updateMachineStatus(selectedMachine.id, newRecord.to, 'location');
+      await updateMachineStatus(selectedMachine.id, auditMessage, 'status'); 
+      
+      if (isFinishingRent) {
+        await updateMachineStatus(selectedMachine.id, 'REMOVED', 'operationalStatus');
+      }
+      
+      setShowTransferForm(false);
+      setGatepassNo('');
+      setTransferTo('');
+      setIsFinishingRent(false);
+      alert("Machine transfer successfully logged!");
+    } catch (err) {
+      console.error("Transfer Error:", err);
+      alert("Could not save transfer. Please check connection.");
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    await addMachine({ 
+      section,
+      type,
+      brand,
+      purchaseDate,
+      serialNo,
+      faNumber,
+      modelNo,
+      dept,
+      name,
+      status: 'IDLE',
+      operationalStatus,
+      location,
+      companyId,
+      barcodeValue,
+      machineValue,
+      ownership,
+      rentedDate: ownership === 'RENT' ? rentedDate : '',
+      rentedCompany: ownership === 'RENT' ? rentedCompany : 'N/A',
+      inhouseGatepass: ownership === 'RENT' ? inhouseGatepass : 'N/A',
+      transferHistory: [], 
+      needleSize: needsNeedleInfo ? needleSize : 'N/A',
+      needleType: needsNeedleInfo ? needleType : 'N/A'
+    });
+
+    setSection(''); setType(''); setBrand(''); setPurchaseDate('');
+    setSerialNo(''); setFaNumber(''); setModelNo(''); setDept('');
+    setName(''); setNeedleSize(''); setNeedleType(''); setLocation('');
+    setCompanyId(''); setBarcodeValue(''); setMachineValue('');
+    setOperationalStatus('WORKING'); setOwnership('OWNED'); setRentedDate('');
+    setRentedCompany(''); setInhouseGatepass('');
+    
+    setShowAddForm(false);
+  };
 
   return (
     <div className="p-4 space-y-6">
@@ -388,6 +394,7 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
             <TableRow>
               <TableHead className="font-bold text-[11px] uppercase">ID / Health</TableHead>
               <TableHead className="font-bold text-[11px] uppercase">Machine Details</TableHead>
+              <TableHead className="font-bold text-[11px] uppercase">Structural Grid Coordinate Anchor</TableHead>
               <TableHead className="font-bold text-[11px] uppercase">Section</TableHead>
               <TableHead className="font-bold text-[11px] uppercase text-right pr-6">Actions</TableHead>
             </TableRow>
@@ -406,6 +413,21 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
                 <TableCell>
                   <div className="font-bold uppercase text-xs">{m.name}</div>
                   <div className="text-[10px] text-slate-500">{(m as any).location} | <span className="font-bold">{(m as any).ownership || 'OWNED'}</span></div>
+                </TableCell>
+                <TableCell>
+                  {/* Layout Assignment Visualization Fields Block */}
+                  {(m as any).sublocationId ? (
+                    <div className="space-y-0.5">
+                      <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 rounded font-black text-[9px] uppercase tracking-wide">
+                        {(m as any).sublocationId.split('_')[1] || (m as any).sublocationId}
+                      </span>
+                      <div className="text-[11px] font-bold text-slate-700">
+                        Row: <span className="text-blue-600">{(m as any).rowNumber}</span> ➔ Index: <span className="text-orange-600">{(m as any).rowIndex}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 italic font-medium uppercase tracking-tight">Floating Asset (No Layout Bound)</span>
+                  )}
                 </TableCell>
                 <TableCell>
                   <div className="text-xs font-bold">{sections.find(s => s.id === m.section)?.name}</div>
@@ -636,31 +658,69 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
 
       {/* CONFIGURATION DIALOG */}
       <Dialog open={showManageConfig} onOpenChange={setShowManageConfig}>
-        <DialogContent className="sm:max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader><DialogTitle>Structure Configuration</DialogTitle></DialogHeader>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 py-4">
-            <div className="space-y-4">
-              <h3 className="text-sm font-bold border-b pb-2">Sections</h3>
-              <div className="flex gap-2">
-                {/* Inside the Configuration Dialog */}
-                <Input 
-                  placeholder="e.g. A" 
-                  value={newSectionName} 
-                  onChange={e => setNewSectionName(e.target.value)} 
-                />
-                <Button size="sm" onClick={() => { if(newSectionName) { addSection(newSectionName); setNewSectionName(''); }}}>Add</Button>
+            
+            {/* Sections & Sublocations Configuration Board */}
+            <div className="space-y-6">
+              <div className="space-y-4">
+                <h3 className="text-sm font-bold border-b pb-2 text-blue-600">1. Main Operational Sections</h3>
+                <div className="flex gap-2">
+                  <Input 
+                    placeholder="e.g. A" 
+                    value={newSectionName} 
+                    onChange={e => setNewSectionName(e.target.value)} 
+                  />
+                  <Button size="sm" onClick={() => { if(newSectionName) { addSection(newSectionName); setNewSectionName(''); }}}>Add</Button>
+                </div>
+                <div className="space-y-1 max-h-32 overflow-y-auto border p-2 rounded">
+                  {sections.map(s => (
+                    <div key={s.id} className="flex justify-between items-center bg-slate-50 p-2 rounded text-sm font-semibold uppercase">
+                      <span>{s.name}</span>
+                      <Button variant="ghost" size="icon" onClick={() => deleteSection(s.id)}><Trash2 className="w-3 h-3 text-red-400" /></Button>
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="space-y-1">
-                {sections.map(s => (
-                  <div key={s.id} className="flex justify-between items-center bg-slate-50 p-2 rounded text-sm">
-                    <span>{s.name}</span>
-                    <Button variant="ghost" size="icon" onClick={() => deleteSection(s.id)}><Trash2 className="w-3 h-3 text-red-400" /></Button>
+
+              {/* NEW: Zone Sublocation Sub-panel Controls */}
+              <div className="space-y-4 border-t pt-4">
+                <h3 className="text-sm font-bold border-b pb-2 text-orange-600">2. Zone Sublocations under Main Section</h3>
+                <div className="space-y-2 p-3 bg-slate-50 rounded-xl border">
+                  <Select value={targetSectionForSub} onValueChange={setTargetSectionForSub}>
+                    <SelectTrigger className="bg-white font-bold text-xs"><SelectValue placeholder="Choose Plant Section Link" /></SelectTrigger>
+                    <SelectContent>
+                      {sections.map(s => <SelectItem key={s.id} value={s.id} className="uppercase font-bold text-xs">{s.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <div className="grid grid-cols-3 gap-2">
+                    <Input placeholder="Zone Name" value={newSublocationName} onChange={e => setNewSublocationName(e.target.value)} className="col-span-2 text-xs font-bold uppercase bg-white" />
+                    <Input type="number" placeholder="Rows" value={newSublocationLines} onChange={e => setNewSublocationLines(e.target.value)} className="text-xs font-bold bg-white" />
                   </div>
-                ))}
+                  <Button size="sm" className="w-full bg-orange-600 hover:bg-orange-700 font-bold text-xs uppercase" onClick={() => { if(targetSectionForSub && newSublocationName) { addSublocation(targetSectionForSub, newSublocationName, Number(newSublocationLines)); setNewSublocationName(''); }}}>Register Sublocation Grid</Button>
+                </div>
+
+                <div className="space-y-1 max-h-40 overflow-y-auto border p-2 rounded bg-slate-50/50">
+                  {sublocations.map(sub => (
+                    <div key={sub.id} className="flex flex-col gap-2 bg-white border p-3 rounded text-xs font-bold">
+                      <div className="flex justify-between items-center border-b pb-1">
+                        <span className="text-blue-700 uppercase">{sections.find(s=>s.id === sub.sectionId)?.name} ➔ {sub.name} ({sub.linesCount} Rows)</span>
+                        <Button variant="ghost" size="icon" className="h-5 w-5" onClick={() => deleteSublocation(sub.id)}><Trash2 className="w-3.5 h-3.5 text-red-400" /></Button>
+                      </div>
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" variant="outline" className="h-7 text-[9px] font-black border-blue-300 text-blue-700 uppercase" onClick={() => downloadLocationBarcodes('SUBLOCATION', sub.id)}><Printer size={10} className="mr-1"/> Print Sub BC</Button>
+                        <Button size="sm" variant="outline" className="h-7 text-[9px] font-black border-orange-300 text-orange-700 uppercase" onClick={() => downloadLocationBarcodes('LINE', sub.id)}><Printer size={10} className="mr-1"/> Print Rows BC</Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
+
+            {/* Machine Types Configuration Panel */}
             <div className="space-y-4">
-              <h3 className="text-sm font-bold border-b pb-2">Machine Types</h3>
+              <h3 className="text-sm font-bold border-b pb-2 text-purple-600">3. Machine Types</h3>
               <Select value={targetSectionForType} onValueChange={setTargetSectionForType}>
                 <SelectTrigger><SelectValue placeholder="Select Section" /></SelectTrigger>
                 <SelectContent>{sections.map(s => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}</SelectContent>
@@ -669,7 +729,16 @@ const [targetSectionForType, setTargetSectionForType] = useState('');
                 <Input placeholder="e.g. CNC" value={newTypeName} onChange={e => setNewTypeName(e.target.value)} />
                 <Button size="sm" onClick={() => { if(newTypeName && targetSectionForType) { addMachineType(newTypeName, targetSectionForType); setNewTypeName(''); }}}>Add</Button>
               </div>
+              <div className="space-y-1 max-h-64 overflow-y-auto border p-2 rounded">
+                {machineTypes.map(t => (
+                  <div key={t.id} className="flex justify-between items-center bg-slate-50 p-2 rounded text-sm uppercase">
+                    <span>{t.name} <span className="text-[10px] text-slate-400 font-bold">({sections.find(s=>s.id === t.sectionId)?.name})</span></span>
+                    <Button variant="ghost" size="icon" onClick={() => deleteMachineType(t.id)}><Trash2 className="w-3 h-3 text-red-400" /></Button>
+                  </div>
+                ))}
+              </div>
             </div>
+
           </div>
         </DialogContent>
       </Dialog>

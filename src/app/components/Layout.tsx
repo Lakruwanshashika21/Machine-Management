@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { Button } from './ui/button';
-import {
-  LayoutDashboard,
-  QrCode,
-  Database,
-  FileText,
-  LogOut,
-  Menu,
-  PlayCircle,
-  Users, // Import new icon
+import { 
+  LayoutDashboard, 
+  QrCode, 
+  Database, 
+  FileText, 
+  Users, 
+  Map as MapIcon,
+  Menu,        // Fixed: Added missing icon
+  PlayCircle,  // Fixed: Added missing icon
+  LogOut       // Fixed: Added missing icon
 } from 'lucide-react';
 
 interface LayoutProps {
@@ -29,8 +30,9 @@ export function Layout({ children, currentView, onViewChange }: LayoutProps) {
     ...(user?.role === 'ADMIN'
       ? [
           { id: 'registry', label: 'Machine Registry', icon: Database, adminOnly: true },
-          { id: 'headcount', label: 'Headcount', icon: Users, adminOnly: true }, // NEW TAB
-          { id: 'users', label: 'Staff Management', icon: Users, adminOnly: true }, // New User Management link
+          { id: 'headcount', label: 'Headcount', icon: Users, adminOnly: true },
+          { id: 'users', label: 'Staff Management', icon: Users, adminOnly: true },
+          { id: 'layout-designer', label: 'Layout Designer', icon: MapIcon, adminOnly: true },
           { id: 'audit', label: 'Audit & Reports', icon: FileText, adminOnly: true },
         ]
       : []),

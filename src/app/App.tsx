@@ -5,6 +5,7 @@ import { Layout } from './components/Layout';
 import { Dashboard } from './components/Dashboard';
 import { Scanning } from './components/Scanning';
 import { MachineRegistry } from './components/MachineRegistry';
+import { LayoutDesigner } from './components/LayoutDesigner';
 import { HeadcountManager } from './components/HeadcountManager';
 import { AuditReports } from './components/AuditReports';
 import { UserManagement } from './components/UserManagement';
@@ -57,6 +58,7 @@ function AppContent() {
       case 'users':     return isAdmin ? <UserManagement /> : <AccessDenied />;
       case 'audit':     return isAdmin ? <AuditReports /> : <AccessDenied />;
       case 'headcount': return isAdmin ? <HeadcountManager /> : <AccessDenied />;
+      case 'layout-designer': return isAdmin ? <LayoutDesigner /> : <AccessDenied />;
       default:          return <Dashboard />;
     }
   };
